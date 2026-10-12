@@ -151,6 +151,8 @@ def new_job(body: NewJob):
     _detect_archived(job)
     if body.cover:
         _save_cover(job, resolve(body.cover))
+        if body.cover.startswith("Uploads/images/"):
+            jobs.update(job, cover_upload=body.cover)  # so deleting the sermon can remove it
     return job
 
 
@@ -162,6 +164,31 @@ def list_jobs():
 @app.get("/api/jobs/{jid}")
 def get_job(jid: str):
     return must_job(jid)
+
+
+@app.delete("/api/jobs/{jid}")
+def delete_job(jid: str):
+    """Remove a sermon from Sermon Studio: its cache, its uploaded recording/slide and its MP3 in
+    data/output. Never touches the NAS archive or WordPress."""
+    job = must_job(jid)
+    if not jobs.delete(job):
+        raise HTTPException(409, "It's busy (analyzing, making the MP3 or uploading). Stop it or wait, then try again.")
+    others = [jobs.get(j["id"]) for j in jobs.recent(10_000)]
+    used = {o["source"] for o in others if o} | {(o.get("output") or {}).get("path") for o in others if o}
+    removed = []
+    for path in (Path(job["source"]), Path((job.get("output") or {}).get("path") or "/nonexistent")):
+        inside = config.UPLOADS.resolve() in path.resolve().parents or config.OUTPUT.resolve() in path.resolve().parents
+        if inside and path.exists() and str(path) not in used:
+            path.unlink()
+            removed.append(path.name)
+    if job.get("cover_upload"):
+        try:
+            p = resolve(job["cover_upload"])
+            p.unlink()
+            removed.append(p.name)
+        except (HTTPException, OSError):
+            pass
+    return {"ok": True, "removed": removed}
 
 
 @app.get("/api/jobs/{jid}/transcript")

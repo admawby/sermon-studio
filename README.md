@@ -159,7 +159,7 @@ ACF fields are looked up by name, so it keeps working if the field keys change. 
 The step bar at the top shows where you are. Click any finished step to go back to it.
 
 1. **Upload.** Drop the WAV into the left box and the sermon slide into the right box, or tap a box to choose a file. Each box shows upload progress and turns green when the file is done. **Next: Analyze** starts the work. If you leave out the image, the app asks before continuing, and you can add one in Review.
-2. **Analyze.** Check the suggested NAS folder. It's marked *existing folder* or *new folder*. Press **Save here**, or **Choose a different folder…** first. The checklist shows each stage: convert, transcribe (with %), find the sermon, write the title and description. On a CPU this takes about 20–25 minutes for a 65-minute service, and with a GPU a couple of minutes. You can close the tab and come back later via **Continue a sermon you already started** in step 1. Tick **🔔 Notify me on Discord when it's done** to get the same Discord message as for automatically found recordings, with clips and Publish/Draft buttons.
+2. **Analyze.** Check the suggested NAS folder. It's marked *existing folder* or *new folder*. Press **Save here**, or **Choose a different folder…** first. The checklist shows each stage: convert, transcribe (with %), find the sermon, write the title and description. On a CPU this takes about 20–25 minutes for a 65-minute service, and with a GPU a couple of minutes. You can close the tab and come back later via **Continue a sermon you already started** in step 1. Each entry there has a **🗑 Delete** button. It removes the sermon's analysis, previews, MP3 and uploaded files from the app, but not anything on the NAS or in WordPress. Tick **🔔 Notify me on Discord when it's done** to get the same Discord message as for automatically found recordings, with clips and Publish/Draft buttons.
 3. **Review.**
    - The shaded part of the waveform is the sermon. Click the waveform to listen anywhere. **▶ Listen** and **▶ Last 20 s** play the edges.
    - Hover a transcript line and press **start here** or **end here**, type a time (`H:MM:SS`), or play to a point and press **Set to playhead**. Search finds phrases like "let's pray".
@@ -218,6 +218,7 @@ The log (`docker logs sermon-studio`) shows `discord: logged in as Sermon Studio
 | POST | `/api/jobs/{id}/describe` `{start,end}` | re-write the title, scripture and description for a cut |
 | GET | `/api/jobs`, `/api/jobs/{id}`, `/api/jobs/{id}/transcript` | job state |
 | GET | `/api/jobs/{id}/preview.mp3 \| waveform.png \| cover.jpg \| output.mp3` | files |
+| DELETE | `/api/jobs/{id}` | delete a sermon and its cached/uploaded files (not NAS or WordPress) |
 | POST | `/api/jobs/{id}/redetect` | re-run detection on the cached transcript |
 | POST | `/api/jobs/{id}/cover` (multipart) or `/cover-path` `{path}` | set the cover image |
 | POST | `/api/jobs/{id}/encode` `{start,end,title,speaker,series,series_name,scripture,description,date,bitrate,normalize}` | make the MP3 |

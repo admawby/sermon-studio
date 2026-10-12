@@ -2,6 +2,7 @@
 import hashlib
 import json
 import queue
+import shutil
 import re
 import threading
 import time
@@ -120,6 +121,18 @@ def _stopped(job):
         update(job, status="ready", message="Stopped. Kept the previous result.", progress=1)
     else:
         update(job, status="cancelled", message="Analysis stopped.", progress=0)
+
+
+def delete(job):
+    """Forget a job and remove its cached files (data/work/<id>). Returns False if it's busy."""
+    busy = job.get("encoding") or job.get("publishing") or (job.get("archive") or {}).get("status") == "saving"
+    if _current["id"] == job["id"] or busy:
+        return False
+    with _lock:
+        _jobs.pop(job["id"], None)
+    job["status"] = "deleted"  # a queued copy in the worker is skipped
+    shutil.rmtree(config.WORK / job["id"], ignore_errors=True)
+    return True
 
 
 def redetect(job):

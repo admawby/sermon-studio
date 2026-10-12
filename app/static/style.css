@@ -107,6 +107,10 @@ footer.nav .actions { margin: 0; }
 .files li { padding: .4rem .7rem; border-bottom: 1px solid #f0f1f3; cursor: pointer; display: flex; justify-content: space-between; gap: .5rem; }
 .files li:hover { background: #f3f6fa; }
 .files li .meta { color: var(--muted); font-size: .85em; white-space: nowrap; }
+.files li .del { padding: .15rem .55rem; font-size: .8rem; margin-left: .3rem; }
+.files li .del:hover { background: #f6dcd6; color: var(--bad); }
+#recent li { align-items: center; }
+#recent li > span:first-child { flex: 1; }
 
 /* step 2 */
 .folderRow { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }

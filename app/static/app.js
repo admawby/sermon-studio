@@ -155,9 +155,30 @@ $("#toAnalyze").onclick = async () => {
 
 async function loadRecent() {
   const list = $("#recent"); list.innerHTML = "";
-  for (const j of await api("/api/jobs"))
-    list.append(item(`${niceDate(j.date)} · ${j.name}`, j.published ? `posted (${j.published.status})` : j.status === "ready" ? "ready to review" : j.status,
-                     () => openJob(j.id)));
+  const jobsList = await api("/api/jobs");
+  $("#recentBox").hidden = !jobsList.length;
+  for (const j of jobsList) {
+    const li = item(`${niceDate(j.date)} · ${j.name}`,
+      j.published ? (j.published.status === "publish" ? "published" : "draft in WordPress") : j.status === "ready" ? "ready to review" : j.status,
+      () => openJob(j.id));
+    const del = document.createElement("button");
+    del.className = "secondary small del"; del.textContent = "🗑 Delete"; del.title = "Delete this sermon from Sermon Studio";
+    del.onclick = (e) => { e.stopPropagation(); deleteJob(j, li); };
+    li.append(del);
+    list.append(li);
+  }
+}
+
+async function deleteJob(j, li) {
+  if (!confirm(`Delete “${j.name}” (${niceDate(j.date)}) from Sermon Studio?\n\n`
+    + "Removes its analysis, transcript, previews, the MP3 made here and the files you uploaded for it.\n"
+    + "Doesn't touch anything saved on the NAS or posted to WordPress.")) return;
+  try {
+    await api(`/api/jobs/${j.id}`, { method: "DELETE" });
+    li.remove();
+    if (!$("#recent").children.length) $("#recentBox").hidden = true;
+    if (job?.id === j.id) { job = null; history.replaceState(null, "", "#"); }
+  } catch (e) { alert(e.message); }
 }
 
 // generic folder browser used by both pickers
