@@ -37,6 +37,14 @@ def start(acts):
     threading.Thread(target=lambda: asyncio.run(_main()), daemon=True, name="discord").start()
 
 
+def connected():
+    return _ready.is_set()
+
+
+def name():
+    return str(_client.user) if _client and _client.user else None
+
+
 def _call(coro):
     """Run a coroutine on the bot's loop from any other thread and wait for it."""
     if not _ready.wait(timeout=60):

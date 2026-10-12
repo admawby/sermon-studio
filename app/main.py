@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import archive, audio, config, discord_bot, jobs, transcribe, watcher
+from . import settings as store
 from .wordpress import WPError, wp
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -30,17 +31,12 @@ async def revalidate_page(request, call_next):
     if not request.url.path.startswith("/api/"):
         resp.headers["Cache-Control"] = "no-cache"
     return resp
-SETTINGS = config.DATA / "settings.json"
-
-
 def settings():
-    return json.loads(SETTINGS.read_text()) if SETTINGS.exists() else {}
+    return store.all()
 
 
 def remember(**kw):
-    s = settings()
-    s.update({k: v for k, v in kw.items() if v})
-    SETTINGS.write_text(json.dumps(s))
+    store.set(**{k: v for k, v in kw.items() if v})
 
 
 def resolve(virtual: str, must_exist=True) -> Path:
@@ -471,8 +467,44 @@ discord_bot.start({
     "latest_job": _latest_auto_job, "job_for_message": _job_for_message, "job": jobs.get,
     "set_cover": _save_cover, "approve": _approve, "update": jobs.update,
 })
-if config.WATCH_ENABLED:
-    watcher.start(resolve(config.ARCHIVE_ROOT), _on_new_recording)
+watcher.start(resolve(config.ARCHIVE_ROOT), _on_new_recording)  # idles while monitoring is off
+
+
+# --- Settings page --------------------------------------------------------------------
+@app.get("/api/settings")
+def get_settings():
+    return {
+        "watch": {"enabled": watcher.enabled(), "folder": config.ARCHIVE_ROOT, "interval": config.WATCH_INTERVAL,
+                  "types": sorted(config.WATCH_EXT), **watcher.status, **watcher.counts()},
+        "discord": {"configured": discord_bot.enabled(), "connected": discord_bot.connected(),
+                    "name": discord_bot.name(), "channel": bool(config.DISCORD_CHANNEL_ID)},
+        "wordpress": {"configured": wp.configured, "url": config.WP_URL},
+        "ai": {**transcribe.model_info(), "llm": config.LLM_MODEL or None},
+    }
+
+
+class WatchSetting(BaseModel):
+    enabled: bool
+    catch_up: bool = False  # when turning on: also process recordings that arrived while it was off
+
+
+@app.post("/api/settings/watch")
+def set_watch(body: WatchSetting):
+    was = watcher.enabled()
+    if body.enabled and not was and not body.catch_up:
+        watcher.rebaseline(resolve(config.ARCHIVE_ROOT))
+    store.set(watch_enabled=body.enabled)
+    if body.enabled:
+        watcher.scan_now()
+    return get_settings()
+
+
+@app.post("/api/settings/watch/scan")
+def watch_scan_now():
+    if not watcher.enabled():
+        raise HTTPException(400, "Monitoring is off")
+    watcher.scan_now()
+    return {"ok": True}
 
 
 # keep last: matches any /api/jobs/<id>/<name>

@@ -10,7 +10,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import config
+from . import config, settings
 
 log = logging.getLogger("sermon.watch")
 STATE = config.DATA / "watch.json"
@@ -76,13 +76,53 @@ def scan(root: Path, pending: dict, on_new):
             log.exception("watch: handling %s failed", p)
 
 
+status = {"last_scan": None, "last_error": None, "last_found": None, "pending": 0}
+_wake = threading.Event()
+
+
+def enabled():
+    """The Settings page wins; WATCH_ENABLED in .env is only the default."""
+    return bool(settings.get("watch_enabled", config.WATCH_ENABLED))
+
+
+def counts():
+    st = _load()
+    return {"seen": len(st["seen"]), "initialized": st["initialized"]}
+
+
+def rebaseline(root: Path):
+    """Mark everything currently in the archive as seen (used when monitoring is switched back on)."""
+    with _lock:
+        state = _load()
+        for p in _recordings(root):
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            if time.time() - st.st_mtime > 600:  # leave files that may still be copying for the next scan
+                state["seen"].setdefault(str(p), st.st_size)
+        state["initialized"] = True
+        _save(state)
+
+
+def scan_now():
+    _wake.set()
+
+
 def start(root: Path, on_new):
     def loop():
         pending = {}
         while True:
-            try:
-                scan(root, pending, on_new)
-            except Exception:
-                log.exception("watch: scan failed")
-            time.sleep(config.WATCH_INTERVAL)
+            if enabled():
+                try:
+                    found = []
+                    scan(root, pending, lambda p: (found.append(p), on_new(p)))
+                    status.update(last_scan=time.time(), last_error=None, pending=len(pending))
+                    if found:
+                        status["last_found"] = {"path": str(found[-1]), "at": time.time()}
+                except Exception as e:
+                    log.exception("watch: scan failed")
+                    status.update(last_scan=time.time(), last_error=str(e))
+            _wake.wait(config.WATCH_INTERVAL)
+            _wake.clear()
     threading.Thread(target=loop, daemon=True, name="watcher").start()

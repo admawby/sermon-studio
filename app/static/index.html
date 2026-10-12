@@ -8,13 +8,46 @@
 </head>
 <body>
 <header>
-  <h1>Sermon Studio</h1>
+  <span class="headLeft">
+    <h1>Sermon Studio</h1>
+    <nav id="tabs">
+      <a href="#" data-tab="wizard" class="active">Sermons</a>
+      <a href="#" data-tab="settings">⚙ Settings</a>
+    </nav>
+  </span>
   <span class="headRight">
     <span id="engine"></span>
     <button id="newSermon" class="small" title="Start over with a new recording">＋ New sermon</button>
   </span>
 </header>
 
+<main id="settingsView" hidden>
+  <h2>Settings</h2>
+
+  <section class="card">
+    <div class="row">
+      <div>
+        <h3>Watch the NAS for new recordings</h3>
+        <p class="hint" id="watchWhat"></p>
+      </div>
+      <label class="switch"><input type="checkbox" id="watchToggle"><span></span></label>
+    </div>
+    <p id="watchStatus"></p>
+    <div class="actions">
+      <button id="scanNow" class="secondary small">Check now</button>
+      <span id="scanMsg" class="hint"></span>
+    </div>
+    <p class="hint">When a new recording appears, it's analyzed automatically and the Discord bot asks you to approve it.
+      Changes take effect right away and are remembered after a restart.</p>
+  </section>
+
+  <section class="card">
+    <h3>Connections</h3>
+    <ul id="connections" class="status"></ul>
+  </section>
+</main>
+
+<div id="wizardView">
 <ol id="stepper">
   <li data-step="1"><span class="dot">1</span><span class="label">Upload</span></li>
   <li data-step="2"><span class="dot">2</span><span class="label">Analyze</span></li>
@@ -222,6 +255,7 @@
     </footer>
   </section>
 </main>
+</div>
 <script src="app.js"></script>
 </body>
 </html>

@@ -516,6 +516,68 @@ $("#newSermon").onclick = () => {
   startOver();
 };
 
+// ======================================================================== settings
+let settingsPoll = null;
+const ago = (t) => {
+  if (!t) return "never";
+  const s = Math.round(Date.now() / 1000 - t);
+  return s < 60 ? "just now" : s < 3600 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)} h ago`;
+};
+
+function showTab(tab) {
+  $("#settingsView").hidden = tab !== "settings";
+  $("#wizardView").hidden = tab === "settings";
+  $$("#tabs a").forEach((a) => a.classList.toggle("active", a.dataset.tab === tab));
+  clearInterval(settingsPoll); settingsPoll = null;
+  if (tab === "settings") { loadSettings(); settingsPoll = setInterval(loadSettings, 5000); }
+}
+$$("#tabs a").forEach((a) => a.onclick = (e) => { e.preventDefault(); showTab(a.dataset.tab); });
+
+async function loadSettings() {
+  renderSettings(await api("/api/settings"));
+}
+
+function renderSettings(s) {
+  const w = s.watch;
+  $("#watchToggle").checked = w.enabled;
+  $("#watchWhat").textContent = `Checks ${w.folder} every ${Math.round(w.interval / 60)} min for new ${w.types.join(", ")} files.`;
+  $("#scanNow").disabled = !w.enabled;
+  const parts = [w.enabled ? "<b class=ok>On</b>" : "<b class=bad>Off</b>",
+    `Last checked: ${ago(w.last_scan)}`, `${w.seen} recordings already known`];
+  if (w.pending) parts.push(`${w.pending} new file(s) still copying`);
+  if (w.last_found) parts.push(`Last new recording: ${w.last_found.path.split("/").pop()} (${ago(w.last_found.at)})`);
+  if (w.last_error) parts.push(`<span class=bad>Last check failed: ${w.last_error}</span>`);
+  $("#watchStatus").innerHTML = parts.join(" · ");
+  const d = s.discord, ai = s.ai;
+  const rows = [
+    ["Discord", !d.configured ? "<span class=bad>Not set up</span> (DISCORD_TOKEN / DISCORD_USER_ID in .env)"
+      : d.connected ? `<span class=ok>Connected</span> as ${d.name}${d.channel ? " · posts in your channel" : " · sends DMs"}`
+      : "<span class=bad>Not connected</span>. Check the token and the container log."],
+    ["WordPress", s.wordpress.configured ? `<span class=ok>Login set</span> · ${s.wordpress.url}` : "<span class=bad>Login not set</span> (WP_USER / WP_PASSWORD in .env)"],
+    ["AI", `${ai.model} on ${ai.device.toUpperCase()}${ai.llm ? ` + ${ai.llm}` : " (no LLM)"}`],
+  ];
+  $("#connections").innerHTML = rows.map(([k, v]) => `<li><span class="k">${k}</span><span>${v}</span></li>`).join("");
+}
+
+$("#watchToggle").onchange = async (e) => {
+  const on = e.target.checked;
+  let catchUp = false;
+  if (on) {
+    catchUp = confirm("Turn on NAS monitoring.\n\nWere any recordings added while it was off that you want analyzed too?\n\nOK = yes, analyze those as well\nCancel = no, only watch for recordings added from now on");
+  } else if (!confirm("Turn off NAS monitoring? New recordings won't be analyzed or sent to Discord until you turn it back on.")) {
+    e.target.checked = true; return;
+  }
+  e.target.disabled = true;
+  try { renderSettings(await api("/api/settings/watch", { method: "POST", body: { enabled: on, catch_up: catchUp } })); }
+  catch (err) { alert(err.message); e.target.checked = !on; }
+  e.target.disabled = false;
+};
+$("#scanNow").onclick = async () => {
+  await api("/api/settings/watch/scan", { method: "POST" }).catch((e) => alert(e.message));
+  $("#scanMsg").textContent = "Checking…";
+  setTimeout(() => { $("#scanMsg").textContent = ""; loadSettings(); }, 4000);
+};
+
 // ======================================================================== boot
 (async () => {
   status = await api("/api/status");

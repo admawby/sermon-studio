@@ -9,9 +9,35 @@ header { display: flex; align-items: baseline; justify-content: space-between; g
 header h1 { margin: 0; font-size: 1.2rem; }
 header #engine { color: #b8c4d2; font-size: .85rem; }
 header .headRight { display: flex; align-items: center; gap: 1rem; }
+header .headLeft { display: flex; align-items: baseline; gap: 1.5rem; }
+#tabs { display: flex; gap: .25rem; }
+#tabs a { color: #b8c4d2; text-decoration: none; padding: .3rem .7rem; border-radius: 6px; font-size: .92rem; }
+#tabs a:hover { color: #fff; background: rgba(255,255,255,.08); }
+#tabs a.active { color: #fff; background: rgba(255,255,255,.15); }
+#settingsView h3 { margin-bottom: .2rem; }
+.switch { position: relative; width: 52px; height: 30px; flex: none; cursor: pointer; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch span { position: absolute; inset: 0; background: #c5ccd5; border-radius: 99px; transition: .2s; }
+.switch span::before { content: ""; position: absolute; width: 24px; height: 24px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: .2s; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+.switch input:checked + span { background: var(--ok); }
+.switch input:checked + span::before { transform: translateX(22px); }
+.switch input:disabled + span { opacity: .5; }
+ul.status { list-style: none; padding: 0; margin: .5rem 0 0; }
+ul.status li { padding: .45rem 0; border-bottom: 1px solid #f0f1f3; display: flex; gap: .6rem; }
+ul.status li:last-child { border: 0; }
+ul.status .k { min-width: 7rem; color: var(--muted); }
+.ok { color: var(--ok); } .bad { color: var(--bad); }
 header #newSermon { background: #fff; color: #1f2d3d; font-weight: 600; }
 header #newSermon:hover { background: #dbe2ea; }
-@media (max-width: 720px) { header #engine { display: none; } }
+header h1, #tabs a, header #newSermon { white-space: nowrap; }
+@media (max-width: 720px) {
+  header { padding: .6rem .8rem; }
+  header #engine { display: none; }
+  header h1 { font-size: 1rem; }
+  header .headLeft { gap: .6rem; }
+  #tabs a { padding: .3rem .45rem; font-size: .85rem; }
+  header #newSermon { padding: .3rem .55rem; font-size: .82rem; }
+}
 main { max-width: 1000px; margin: 0 auto 3rem; padding: 0 1rem; }
 h2 { font-size: 1.3rem; margin: 1.2rem 0 .3rem; }
 h3 { font-size: 1.02rem; margin: 0 0 .5rem; }
