@@ -292,7 +292,7 @@ def encode(jid: str, cut: Cut):
     job = must_job(jid)
     if cut.end - cut.start < 60:
         raise HTTPException(400, "Sermon must be at least a minute long")
-    jobs.update(job, encoding=True, message="Encoding MP3…", cut=cut.model_dump())
+    jobs.update(job, encoding=True, encode_progress=0, message="Making the MP3…", cut=cut.model_dump())
     threading.Thread(target=do_encode, args=(job,), daemon=True).start()
     return {"ok": True}
 
@@ -301,18 +301,26 @@ def do_encode(job):
     """Make the MP3 for job["cut"] (and archive it next to the recording). Returns True on success."""
     cut = job["cut"]
     out = config.OUTPUT / f"{config.FILE_PREFIX}{cut['date'].replace('-', '')}.mp3"
-    jobs.update(job, encoding=True, message="Encoding MP3…")
+    jobs.update(job, encoding=True, encode_progress=0, message="Making the MP3…")
+    last = [0.0]
+
+    def progress(f):
+        if f - last[0] >= 0.01 or f >= 1:
+            last[0] = f
+            jobs.update(job, encode_progress=round(f, 3))
     try:
         audio.encode(Path(job["source"]), out, cut["start"], cut["end"], cut.get("bitrate") or config.MP3_BITRATE,
                      cut.get("normalize", True), {"title": cut["title"], "speaker": cut.get("speaker", ""),
                                                   "series": cut.get("series_name", ""), "date": cut["date"],
                                                   "scripture": cut.get("scripture", "")},
-                     jobs.workdir(job["id"]) / "cover.jpg")
-        jobs.update(job, encoding=False, message="Encoded", output={
+                     jobs.workdir(job["id"]) / "cover.jpg", progress)
+        jobs.update(job, encode_progress=1, output={
             "path": str(out), "name": out.name, "size": out.stat().st_size, "duration": cut["end"] - cut["start"]})
         remember(speaker=cut.get("speaker"), bitrate=cut.get("bitrate"))
         if job["archive"]["status"] == "saved":
+            jobs.update(job, message="Copying the MP3 to the NAS…")
             _archive_files(job)
+        jobs.update(job, encoding=False, message="Encoded")
         return True
     except Exception as e:
         jobs.update(job, encoding=False, message=f"Encoding failed: {e}")

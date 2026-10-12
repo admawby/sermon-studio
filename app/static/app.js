@@ -18,6 +18,7 @@ const niceDate = (d) => new Date(d + "T12:00").toLocaleDateString(undefined, { m
 let status, job = null, step = 1, segments = [], wpMeta = null, poll = null, formLoadedFor = null, waitingDescribe = false;
 const uploads = { audio: null, image: null };
 let uploading = 0;  // uploads in flight
+let encStart = null;  // {t, f} when we first saw the encode progress, for the time estimate
 
 // ======================================================================== wizard
 function reachable(n) {
@@ -448,6 +449,17 @@ $("#toPublish").onclick = async () => {
 function renderPublish() {
   const c = job.cut || {};
   $("#encoding").hidden = !job.encoding;
+  if (job.encoding) {
+    const f = job.encode_progress || 0;
+    $("#encProgress").value = f;
+    $("#encPct").textContent = `${Math.floor(f * 100)}%`;
+    $("#encMsg").textContent = job.message && !/failed/i.test(job.message) ? job.message : "Making the MP3…";
+    // estimate time left from the speed so far
+    if (!encStart || f < encStart.f) encStart = { t: Date.now(), f };
+    const rate = (f - encStart.f) / ((Date.now() - encStart.t) / 1000);
+    $("#encEta").textContent = f >= 1 ? "Almost done…" : rate > 0 && f - encStart.f > 0.02
+      ? `About ${Math.max(1, Math.round((1 - f) / rate / 60))} min left` : "Working out how long this will take…";
+  } else encStart = null;
   $("#summary").hidden = !!job.encoding || !job.output;
   if (!job.encoding && job.output) {
     $("#sumCover").hidden = !job.cover;

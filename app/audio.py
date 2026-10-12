@@ -31,17 +31,29 @@ def prepare(src: Path, work: Path):
              str(work / "waveform.png")])
 
 
+def run_progress(cmd, length, progress):
+    """Run ffmpeg with -progress on stdout, calling progress(fraction 0..1) as it goes."""
+    p = subprocess.Popen(cmd[:1] + ["-progress", "pipe:1", "-nostats"] + cmd[1:],
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    for line in p.stdout:
+        if line.startswith("out_time_us=") and line.strip() != "out_time_us=N/A":
+            progress(min(int(line.split("=", 1)[1]) / 1e6 / length, 1.0))
+    err = p.stderr.read()
+    if p.wait() != 0:
+        raise RuntimeError(f"ffmpeg failed: {err.strip()[-800:]}")
+
+
 def encode(src: Path, out: Path, start: float, end: float, bitrate: str, normalize: bool,
-           tags: dict, cover: Path | None):
+           tags: dict, cover: Path | None, progress=lambda f: None):
     length = end - start
     filters = ["highpass=f=70"]
     if normalize:
         filters.append("loudnorm=I=-16:TP=-1.5:LRA=11")
     filters += ["afade=t=in:d=0.5", f"afade=t=out:st={max(length - 2, 0):.2f}:d=2"]
     tmp = out.with_suffix(".tmp.mp3")
-    run(["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.2f}", "-t", f"{length:.2f}", "-i", str(src),
-         "-vn", "-af", ",".join(filters), "-ac", "1", "-ar", "44100", "-c:a", "libmp3lame",
-         "-b:a", bitrate, "-id3v2_version", "3", str(tmp)])
+    run_progress(["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.2f}", "-t", f"{length:.2f}", "-i", str(src),
+                  "-vn", "-af", ",".join(filters), "-ac", "1", "-ar", "44100", "-c:a", "libmp3lame",
+                  "-b:a", bitrate, "-id3v2_version", "3", str(tmp)], length, progress)
     write_tags(tmp, tags, cover)
     tmp.rename(out)
 

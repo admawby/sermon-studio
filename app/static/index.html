@@ -190,9 +190,10 @@
   <!-- STEP 4 · PUBLISH ----------------------------------------------------->
   <section class="step" data-step="4" hidden>
     <h2>Publish</h2>
-    <div id="encoding" class="card center" hidden>
-      <div class="spinner"></div>
-      <p>Making the MP3…</p>
+    <div id="encoding" class="card" hidden>
+      <div class="row"><b id="encMsg">Making the MP3…</b><b id="encPct">0%</b></div>
+      <progress id="encProgress" max="1" value="0"></progress>
+      <p id="encEta" class="hint"></p>
     </div>
     <div id="summary" class="card" hidden>
       <div class="post">
