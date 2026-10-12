@@ -18,7 +18,7 @@ services:
       - type: bind
         source: ${NAS_PATH:-/mnt/nas}
         target: /media/nas
-        read_only: true
+        # writable so recordings and MP3s can be archived on the NAS (ARCHIVE_ROOT)
         bind: { propagation: rslave }
       - ${LOCAL_PATH:-/srv/recordings}:/media/local:ro
     depends_on: [ollama]

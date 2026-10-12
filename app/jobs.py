@@ -39,7 +39,11 @@ def get(jid):
             p = config.WORK / jid / "state.json"
             if not p.exists():
                 return None
-            _jobs[jid] = json.loads(p.read_text())
+            job = json.loads(p.read_text())
+            # fields added after the job was created
+            job.setdefault("archive", {"status": "none", "folder": None, "message": ""})
+            job.setdefault("cover", (p.parent / "cover.jpg").exists())
+            _jobs[jid] = job
         return _jobs[jid]
 
 
@@ -69,12 +73,25 @@ def create(src: Path, virtual: str):
     job = {"id": jid, "source": str(src), "virtual": virtual, "name": src.name, "status": "queued",
            "message": "Waiting in line…", "progress": 0, "created": time.time(),
            "date": recording_date(src), "duration": None, "proposal": None, "suggest": {},
-           "output": None, "published": None}
+           "output": None, "published": None, "cover": False,
+           "archive": {"status": "none", "folder": None, "message": ""}}
     with _lock:
         _jobs[jid] = job
     save(job)
     _queue.put(jid)
     return job
+
+
+def describe(job, start, end):
+    """Re-run the title/scripture/description suggestion for the given cut."""
+    update(job, describing=True)
+
+    def go():
+        try:
+            update(job, suggest=detect.suggest(transcript(job["id"]), start, end), describing=False)
+        except Exception as e:
+            update(job, describing=False, message=f"Description failed: {e}")
+    threading.Thread(target=go, daemon=True).start()
 
 
 def redetect(job):
@@ -124,7 +141,7 @@ def _analyze(job):
             proposal = None
             update(job, message=f"AI detection failed ({e}); using heuristic.")
     proposal = proposal or detect.heuristic(segments, total)
-    update(job, message="Suggesting a title…")
+    update(job, status="describing", message="Writing the title and description…")
     sug = detect.suggest(segments, proposal["start"], proposal["end"])
     (work / "proposal.json").write_text(json.dumps(proposal))
     update(job, status="ready", message="Ready for review", proposal=proposal, suggest=sug)

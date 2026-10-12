@@ -1,13 +1,11 @@
 # Sermon Studio
 
-A self-hosted web app that turns a full Sunday service recording into a sermon podcast episode:
+A self-hosted web app that turns a full Sunday service recording into a sermon podcast episode. It works as a four-step wizard:
 
-1. **Pick** a recording from the NAS or the server (or upload one from your computer).
-2. **AI finds the sermon.** Whisper transcribes the service locally and a local LLM picks where the sermon starts and ends. It also suggests a title and the main scripture passage.
-3. **Review** the cut on a waveform with a clickable, searchable transcript. Click any line to hear it and adjust the start or end with one click.
-4. **Fill in the details:** title, speaker, scripture, date, cover image and **series**. The series list is pulled from WordPress and defaults to the series of the most recently edited sermon.
-5. **Encode** a small mono MP3 (volume-levelled, ID3-tagged, cover art embedded).
-6. **Upload** to the church WordPress site as a draft or published post.
+1. **Upload:** drop in the service recording and the sermon slide (cover image). You can also pick files already on the NAS.
+2. **Analyze:** the app suggests a NAS folder to archive the recording in (following your existing folder layout). Meanwhile, Whisper transcribes the service locally and a local LLM finds where the sermon starts and ends, then writes a title, the scripture reference and a 2–3 sentence description.
+3. **Review:** check the cut on a waveform with a clickable, searchable transcript. Then edit the title, speaker, date, scripture, description and **series**. Series and speaker come from WordPress and default to those of the most recently edited sermon.
+4. **Publish:** the app encodes a small mono MP3 (volume-levelled, ID3-tagged, cover art embedded) and saves it next to the recording on the NAS. It shows a preview of the post, then uploads it to WordPress as a draft or publishes it.
 
 Everything except the WordPress upload runs on your own hardware. No audio leaves the house until you press upload.
 
@@ -26,10 +24,12 @@ Built for a church website hosted on The Church Co's WordPress platform. The upl
 
 | Stage | What happens | Output (in `data/work/<job-id>/`) |
 |---|---|---|
+| Upload | The browser uploads both files into `data/uploads/`, keeping the recording's original timestamp so re-uploading the same file reuses its analysis | `data/uploads/` |
+| Archive | Suggests `<ARCHIVE_ROOT>/YYYY/MM - Month/YYYY_MM_DD`, copying the naming of existing folders and reusing a folder that already exists for that date. On **Save here**, it copies the recording there, and the MP3 later. It never overwrites a file it didn't write itself. | NAS |
 | Prepare | ffmpeg makes a 16 kHz mono WAV for Whisper, a 48 kbps preview MP3 for the browser player and a waveform PNG | `speech.wav`, `preview.mp3`, `waveform.png` |
 | Transcribe | faster-whisper with VAD; `small.en` on CPU, `large-v3-turbo` on GPU | `transcript.json` |
 | Detect | **AI:** a coarse pass over the whole service (30-second lines), then a full-resolution pass around each edge to pin the exact start/end. **Fallback:** the longest stretch of steady speech (speech runs about 140 words per minute, sung lyrics much less) | `proposal.json` |
-| Suggest | Title and main scripture from the sermon text (LLM, plus a regex scripture finder) | stored in `state.json` |
+| Suggest | Title, main scripture and a 2–3 sentence description from the sermon text (LLM, plus a regex scripture finder). "✨ Write it again" in Review re-runs it for an adjusted cut. | stored in `state.json` |
 | Encode | Cut, 70 Hz high-pass, loudness-normalised to −16 LUFS (the podcast standard), fades, mono MP3 at the chosen bitrate, ID3 tags and cover | `data/output/<FILE_PREFIX>YYYYMMDD.mp3` |
 | Upload | Logs in to wp-admin, uploads the MP3 and cover to the media library and submits the "Add New Podcast" form the same way a person would | link shown in the UI |
 
@@ -66,7 +66,7 @@ Open **http://<server>:8790**.
 
 | Host | Container | Shown in the browser as |
 |---|---|---|
-| `NAS_PATH` (e.g. a NAS share, read-only) | `/media/nas` | `NAS` |
+| `NAS_PATH` (e.g. a NAS share, **writable** so recordings and MP3s can be archived) | `/media/nas` | `NAS` |
 | `LOCAL_PATH` (read-only) | `/media/local` | `Local` |
 | `./data/uploads` | `/data/uploads` | `Uploads` (files uploaded from your computer) |
 
@@ -97,7 +97,8 @@ The header of the page shows which model and device are in use (for example `AI:
 | `FILE_PREFIX` | `Sermon_` | Output name: `<prefix>YYYYMMDD.mp3` |
 | `NAS_PATH` / `LOCAL_PATH` | `/mnt/nas`, `/srv/recordings` | Host folders mounted read-only for the file browser |
 | `BROWSE_ROOTS` | `NAS=/media/nas,Local=/media/local,Uploads=/data/uploads` | Named folders the file browser can open |
-| `START_PATH` | `NAS` | Folder the browser opens at |
+| `START_PATH` | `NAS` | Folder the NAS picker opens at |
+| `ARCHIVE_ROOT` | `NAS` | Archive folder for recordings and MP3s; the app suggests `YYYY/MM - Month/YYYY_MM_DD` under it |
 
 To set the login without the password landing in your shell history, save this as `set-wp-login.sh` and run `bash set-wp-login.sh`. Run it as a file rather than pasting it, because a pasted `read` takes the next pasted line as its answer:
 
@@ -129,7 +130,8 @@ The Church Co blocks the WordPress REST API for everyone, logged in or not: ever
 | Form field | Filled with |
 |---|---|
 | Title | sermon title |
-| Content and Excerpt | scripture reference (e.g. `Romans 8:28-39`), as on existing sermons |
+| Content | the 2–3 sentence description |
+| Excerpt | scripture reference (e.g. `Romans 8:28-39`) |
 | Audio (ACF file field `podcast_audio`) | the MP3, uploaded to the media library |
 | Featured image | the cover image |
 | Feed Image (ACF `podcast_feed_image`) | copied from the most recent sermon (the same podcast artwork every week) |
@@ -145,16 +147,16 @@ ACF fields are looked up by name, so it keeps working if the field keys change. 
 
 ## Using it
 
-1. **Pick the recording.** The browser opens at `START_PATH` with the newest folders first. Click a `.wav`, or use **Upload from this computer**.
-2. **Wait for the analysis.** A progress bar shows each stage. Jobs run one at a time, and you can close the tab and come back (open a job again from **Recent recordings**).
-3. **Check the cut.**
-   - The shaded region on the waveform is the proposed sermon. Click the waveform to jump there.
-   - **▶ Play from start** and **▶ Last 20 s** let you hear both edges quickly.
-   - Hover a transcript line and press **start here** or **end here**, or type a time (`H:MM:SS`), or play to a point and press **Set to playhead**.
-   - Use the search box to find phrases like "let's pray" or "open your Bibles".
-4. **Fill in the details.** The title and scripture are pre-filled from the AI suggestions. The speaker is remembered from last time. The date comes from the recording's file name. Choose the series and add a cover image, either uploaded from your computer or picked from the NAS.
-5. **Make MP3**, then listen to the result in the player or download it.
-6. **Upload as draft** (recommended) and check it in WP Admin, or **Upload & publish**.
+The step bar at the top shows where you are. Click any finished step to go back to it.
+
+1. **Upload.** Drop the WAV into the left box and the sermon slide into the right box, or tap a box to choose a file. Each box shows upload progress and turns green when the file is done. **Next: Analyze** starts the work. If you leave out the image, the app asks before continuing, and you can add one in Review.
+2. **Analyze.** Check the suggested NAS folder. It's marked *existing folder* or *new folder*. Press **Save here**, or **Choose a different folder…** first. The checklist shows each stage: convert, transcribe (with %), find the sermon, write the title and description. On a CPU this takes about 20–25 minutes for a 65-minute service, and with a GPU a couple of minutes. You can close the tab and come back later via **Continue a sermon you already started** in step 1.
+3. **Review.**
+   - The shaded part of the waveform is the sermon. Click the waveform to listen anywhere. **▶ Listen** and **▶ Last 20 s** play the edges.
+   - Hover a transcript line and press **start here** or **end here**, type a time (`H:MM:SS`), or play to a point and press **Set to playhead**. Search finds phrases like "let's pray".
+   - Edit the title, speaker, date, series, scripture (excerpt) and description (content). **✨ Write it again** asks the AI for a new title, scripture and description based on your adjusted cut.
+   - **MP3 settings** sets the bitrate (64 kbps mono by default) and loudness levelling.
+4. **Publish.** The app makes the MP3 and copies it into the NAS folder. It then shows the post as it will appear, with a player for the finished MP3. Choose **Upload as draft** to check the post in WP Admin first (recommended), or **Publish now**. When it's done you get links to the post, and **Start the next sermon** starts over.
 
 ## API
 
@@ -162,13 +164,16 @@ ACF fields are looked up by name, so it keeps working if the field keys change. 
 |---|---|---|
 | GET | `/api/status` | models, device, roots, saved settings |
 | GET | `/api/browse?path=NAS/Audio&kind=audio\|image` | list a folder |
-| POST | `/api/upload-source` | multipart `file` → `{virtual}` |
-| POST | `/api/jobs` `{path}` | start (or reopen) analysis of a recording |
+| POST | `/api/upload/audio` | multipart `file` (+ `last_modified` ms) → `{virtual}` |
+| POST | `/api/upload/image` | multipart `file` → `{virtual}` |
+| POST | `/api/jobs` `{path, cover}` | start (or reopen) analysis of a recording, with an optional cover image path |
+| GET / POST | `/api/jobs/{id}/archive` (`{folder}`) | suggested NAS folder / save the recording (and MP3) there |
+| POST | `/api/jobs/{id}/describe` `{start,end}` | re-write the title, scripture and description for a cut |
 | GET | `/api/jobs`, `/api/jobs/{id}`, `/api/jobs/{id}/transcript` | job state |
 | GET | `/api/jobs/{id}/preview.mp3 \| waveform.png \| cover.jpg \| output.mp3` | files |
 | POST | `/api/jobs/{id}/redetect` | re-run detection on the cached transcript |
 | POST | `/api/jobs/{id}/cover` (multipart) or `/cover-path` `{path}` | set the cover image |
-| POST | `/api/jobs/{id}/encode` `{start,end,title,speaker,series,series_name,scripture,date,bitrate,normalize}` | make the MP3 |
+| POST | `/api/jobs/{id}/encode` `{start,end,title,speaker,series,series_name,scripture,description,date,bitrate,normalize}` | make the MP3 |
 | POST | `/api/jobs/{id}/publish` `{status: draft\|publish}` | upload to WordPress |
 | GET | `/api/wp/meta`, `/api/wp/discover` | series list and default; field discovery |
 
@@ -176,13 +181,14 @@ ACF fields are looked up by name, so it keeps working if the field keys change. 
 
 ```
 app/
-  main.py         FastAPI routes, safe path resolution, encode/publish threads
+  main.py         FastAPI routes, safe path resolution, upload/archive/encode/publish
+  archive.py      NAS folder suggestion + no-clobber copying
   jobs.py         job queue + per-recording state in data/work/<id>/
   audio.py        ffmpeg helpers: prepare, encode, ID3 tags
   transcribe.py   faster-whisper (auto CPU/CUDA)
   detect.py       sermon boundary detection (LLM + heuristic), title/scripture suggestion
   wordpress.py    wp-admin client: series/speaker sync, media upload, podcast form
-  static/         single-page UI (no build step, no external JS)
+  static/         four-step wizard UI (no build step, no external JS)
 docker-compose.yml       app + ollama
 docker-compose.gpu.yml   GPU override
 ```

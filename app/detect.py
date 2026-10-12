@@ -141,19 +141,24 @@ def llm(segments, total, status):
 
 
 def suggest(segments, start, end):
-    """Title + main scripture for the cut."""
+    """Title, main scripture and a short description of the cut."""
     text = " ".join(s["text"] for s in segments if start <= s["start"] <= end)
-    out = {"title": "", "scripture": find_scripture(text[:6000]) or find_scripture(text)}
-    if config.LLM_MODEL:
+    out = {"title": "", "scripture": find_scripture(text[:6000]) or find_scripture(text), "description": ""}
+    if config.LLM_MODEL and text:
         words = text.split()
-        sample = " ".join(words[:1800]) + " … " + " ".join(words[-500:])
+        sample = " ".join(words[:2500]) + (" … " + " ".join(words[-700:]) if len(words) > 3200 else "")
         try:
-            res = _ollama("Here is a sermon transcript. Suggest a short sermon title (2-7 words, title case, "
-                          "like 'Grace Upon Grace' or 'Faith in the Storm') and the main scripture "
-                          'passage (e.g. "Romans 8"). Reply as JSON: {"title": "...", "scripture": "..."}\n\n'
-                          + sample, 8192)
+            res = _ollama(
+                "Here is the transcript of a sermon. Write:\n"
+                "- title: a short sermon title, 2-7 words, Title Case, like 'Grace Upon Grace' or 'Faith in the Storm'\n"
+                "- scripture: the main passage preached, as a reference like 'Romans 8:28-39' (book chapter:verses)\n"
+                "- description: 2-3 sentences for the church website inviting people to listen. Say what the passage "
+                "is about and the main point of the message. Plain, warm language; no hype, no quotes, don't name "
+                "the preacher, don't start with 'In this sermon'.\n"
+                'Reply as JSON: {"title": "...", "scripture": "...", "description": "..."}\n\n' + sample, 8192)
             out["title"] = res.get("title", "").strip().strip('"')
             out["scripture"] = res.get("scripture", "").strip() or out["scripture"]
+            out["description"] = res.get("description", "").strip()
         except Exception:
             pass
     return out

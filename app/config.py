@@ -21,6 +21,8 @@ for part in env("BROWSE_ROOTS", "Uploads=/data/uploads").split(","):
 ROOTS.setdefault("Uploads", UPLOADS)
 
 START_PATH = env("START_PATH", "")
+# where service recordings + finished MP3s are archived (a virtual path under one of the roots)
+ARCHIVE_ROOT = env("ARCHIVE_ROOT", "NAS")
 WHISPER_MODEL = env("WHISPER_MODEL", "auto")
 LLM_MODEL = env("LLM_MODEL", "")
 OLLAMA_URL = env("OLLAMA_URL", "http://ollama:11434").rstrip("/")

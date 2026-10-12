@@ -4,7 +4,8 @@ The Church Co blocks the REST API for everyone (every route answers {"message": 
 so this logs in with a username/password and fills in the classic "Add New Podcast" form:
 
   title          -> post_title
-  scripture      -> content + excerpt (how existing sermons are entered)
+  description    -> content (2-3 sentences written by the local LLM, edited by a person)
+  scripture      -> excerpt
   MP3            -> media library, attached in the ACF "Audio" file field
   cover image    -> media library, featured image
   feed image     -> copied from the most recent sermon (the same podcast artwork every week)
@@ -223,7 +224,7 @@ class WordPress:
         if fields.get("series"):
             cats.append(str(fields["series"]))
         override = {
-            "post_title": fields["title"], "content": scripture, "excerpt": scripture,
+            "post_title": fields["title"], "content": fields.get("description") or scripture, "excerpt": scripture,
             f"acf[{acf_key(page, 'podcast_audio')}]": str(audio["id"]),
             "tax_input[people]": fields.get("speaker", ""),
             "aa": y, "mm": mo, "jj": d, "hh": "10", "mn": "00", "ss": "00", "edit_date": "1",

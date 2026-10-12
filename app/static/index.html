@@ -9,35 +9,107 @@
 <body>
 <header>
   <h1>Sermon Studio</h1>
-  <span id="engine" class="muted"></span>
+  <span id="engine"></span>
 </header>
 
+<ol id="stepper">
+  <li data-step="1"><span class="dot">1</span><span class="label">Upload</span></li>
+  <li data-step="2"><span class="dot">2</span><span class="label">Analyze</span></li>
+  <li data-step="3"><span class="dot">3</span><span class="label">Review</span></li>
+  <li data-step="4"><span class="dot">4</span><span class="label">Publish</span></li>
+</ol>
+
 <main>
-  <section id="pick" class="card">
-    <h2>1. Pick the service recording</h2>
-    <div class="row">
-      <nav id="crumbs"></nav>
-      <label class="button secondary">Upload from this computer…
-        <input type="file" id="localAudio" accept="audio/*,.wav,.flac,.m4a,.mp3" hidden>
-      </label>
+  <!-- STEP 1 · UPLOAD ------------------------------------------------------>
+  <section class="step" data-step="1">
+    <h2>Upload the recording and the sermon slide</h2>
+    <p class="hint">Drop the files here or tap a box to choose them. They're copied into Sermon Studio so the next steps can work on them.</p>
+    <div class="drops">
+      <div class="drop" id="dropAudio" tabindex="0">
+        <input type="file" accept="audio/*,.wav,.flac,.m4a,.mp3,.aif,.aiff" hidden>
+        <div class="icon">🎙</div>
+        <div class="title">Service recording</div>
+        <div class="sub">WAV, MP3, M4A or FLAC</div>
+        <div class="file"></div>
+        <progress max="1" value="0" hidden></progress>
+      </div>
+      <div class="drop" id="dropImage" tabindex="0">
+        <input type="file" accept="image/*" hidden>
+        <img class="preview" alt="" hidden>
+        <div class="icon">🖼</div>
+        <div class="title">Sermon slide / cover image</div>
+        <div class="sub">JPG or PNG, ideally square</div>
+        <div class="file"></div>
+        <progress max="1" value="0" hidden></progress>
+      </div>
     </div>
-    <div id="uploadProgress" class="muted" hidden></div>
-    <ul id="files" class="files"></ul>
+    <div class="alt">
+      <a href="#" id="pickNasAudio">…or use a recording that's already on the NAS</a>
+      <a href="#" id="pickNasImage">…or an image from the NAS</a>
+    </div>
+    <div id="nasPicker" class="picker" hidden>
+      <div class="row"><nav class="crumbs"></nav><button class="secondary small" data-close>Close</button></div>
+      <ul class="files"></ul>
+    </div>
     <details id="recentBox">
-      <summary>Recent recordings</summary>
+      <summary>Continue a sermon you already started</summary>
       <ul id="recent" class="files"></ul>
     </details>
+    <footer class="nav">
+      <span></span>
+      <button id="toAnalyze" disabled>Next: Analyze →</button>
+    </footer>
   </section>
 
-  <section id="review" class="card" hidden>
-    <h2>2. Check where the sermon starts and ends</h2>
-    <div id="jobName" class="muted"></div>
-    <div id="progressBox">
-      <div id="jobMsg"></div>
-      <progress id="jobProgress" max="1" value="0"></progress>
+  <!-- STEP 2 · ANALYZE ----------------------------------------------------->
+  <section class="step" data-step="2" hidden>
+    <h2>Analyze</h2>
+    <p class="hint jobName"></p>
+
+    <div class="card">
+      <h3>Save to the NAS</h3>
+      <p class="hint">Recommended folder for this service. The finished MP3 will be saved there too.</p>
+      <div class="folderRow">
+        <code id="folder">…</code>
+        <span id="folderTag" class="tag"></span>
+      </div>
+      <div class="actions">
+        <button id="saveNas">Save here</button>
+        <button id="changeFolder" class="secondary">Choose a different folder…</button>
+        <span id="archiveMsg" class="hint"></span>
+      </div>
+      <div id="folderPicker" class="picker" hidden>
+        <div class="row"><nav class="crumbs"></nav><button class="small" id="useFolder">Use this folder</button></div>
+        <ul class="files"></ul>
+      </div>
     </div>
-    <div id="editor" hidden>
-      <p id="reason" class="muted"></p>
+
+    <div class="card">
+      <h3>Find the sermon</h3>
+      <ul id="checklist">
+        <li data-s="preparing"><span class="st"></span>Convert the audio</li>
+        <li data-s="transcribing"><span class="st"></span>Transcribe the service <span class="pct"></span></li>
+        <li data-s="detecting"><span class="st"></span>Find where the sermon starts and ends</li>
+        <li data-s="describing"><span class="st"></span>Write a title, scripture and description</li>
+      </ul>
+      <progress id="jobProgress" max="1" value="0"></progress>
+      <p id="jobMsg" class="hint"></p>
+      <p class="hint">This keeps running if you close the page. Come back to it from <i>Continue a sermon</i> in step 1.</p>
+    </div>
+    <footer class="nav">
+      <button class="secondary" data-go="1">← Back</button>
+      <button id="toReview" disabled>Next: Review →</button>
+    </footer>
+  </section>
+
+  <!-- STEP 3 · REVIEW ------------------------------------------------------>
+  <section class="step" data-step="3" hidden>
+    <h2>Review</h2>
+    <p class="hint jobName"></p>
+
+    <div class="card">
+      <h3>Sermon audio</h3>
+      <p id="reason" class="hint"></p>
       <div id="wave">
         <img id="waveImg" alt="waveform">
         <div id="region"></div>
@@ -46,70 +118,100 @@
       <audio id="player" controls preload="metadata"></audio>
       <div class="cuts">
         <div>
-          <label>Start <input id="start" class="time"></label>
-          <button data-act="setStart" class="secondary">Set to playhead</button>
-          <button data-act="playStart" class="secondary">▶ Play from start</button>
+          <label>Starts at <input id="start" class="time"></label>
+          <button data-act="setStart" class="secondary small">Set to playhead</button>
+          <button data-act="playStart" class="secondary small">▶ Listen</button>
         </div>
         <div>
-          <label>End <input id="end" class="time"></label>
-          <button data-act="setEnd" class="secondary">Set to playhead</button>
-          <button data-act="playEnd" class="secondary">▶ Last 20 s</button>
+          <label>Ends at <input id="end" class="time"></label>
+          <button data-act="setEnd" class="secondary small">Set to playhead</button>
+          <button data-act="playEnd" class="secondary small">▶ Last 20 s</button>
         </div>
-        <div class="muted">Length: <b id="length"></b> · <a href="#" id="redetect">re-run detection</a></div>
+        <div class="hint">Sermon length: <b id="length"></b> · <a href="#" id="redetect">find it again</a></div>
       </div>
-      <details open>
-        <summary>Transcript (click a line to listen, use the buttons to set start/end)</summary>
-        <input id="search" placeholder="Search transcript…">
+      <details>
+        <summary>Transcript: tap a line to listen, or use its buttons to move the start or end</summary>
+        <input id="search" placeholder="Search the transcript…">
         <ol id="transcript"></ol>
       </details>
     </div>
+
+    <div class="card">
+      <h3>Details for the website</h3>
+      <div class="detailGrid">
+        <div class="coverBox">
+          <img id="coverImg" alt="" hidden>
+          <div id="noCover" class="hint">No cover image</div>
+          <label class="button secondary small">Replace…<input type="file" id="coverFile" accept="image/*" hidden></label>
+        </div>
+        <div class="grid">
+          <label class="wide">Title <input id="title"></label>
+          <label>Speaker <input id="speaker" list="speakers" placeholder="Pastor's name"><datalist id="speakers"></datalist></label>
+          <label>Date <input id="date" type="date"></label>
+          <label>Series
+            <select id="series"><option value="">Loading…</option></select>
+            <small id="seriesNote" class="hint"></small>
+          </label>
+          <label>Scripture <small class="hint">(excerpt)</small> <input id="scripture" placeholder="Romans 8:28-39"></label>
+          <label class="wide">Description <small class="hint">(post content, 2–3 sentences)</small>
+            <textarea id="description" rows="4"></textarea>
+            <span class="actions"><button id="rewrite" class="secondary small">✨ Write it again</button><span id="rewriteMsg" class="hint"></span></span>
+          </label>
+        </div>
+      </div>
+      <details class="advanced">
+        <summary>MP3 settings</summary>
+        <div class="grid">
+          <label>Quality
+            <select id="bitrate">
+              <option value="48k">48 kbps mono (smallest)</option>
+              <option value="64k">64 kbps mono</option>
+              <option value="96k">96 kbps mono</option>
+              <option value="128k">128 kbps mono</option>
+            </select>
+          </label>
+          <label class="check"><input id="normalize" type="checkbox" checked> Even out the volume (−16 LUFS)</label>
+        </div>
+      </details>
+    </div>
+    <footer class="nav">
+      <button class="secondary" data-go="2">← Back</button>
+      <button id="toPublish">Next: Make the MP3 →</button>
+    </footer>
   </section>
 
-  <section id="details" class="card" hidden>
-    <h2>3. Sermon details</h2>
-    <div class="grid">
-      <label>Title <input id="title"></label>
-      <label>Speaker <input id="speaker" list="speakers" placeholder="Pastor's name"><datalist id="speakers"></datalist></label>
-      <label>Series
-        <select id="series"><option value="">Loading from WordPress…</option></select>
-        <small id="seriesNote" class="muted"></small>
-      </label>
-      <label>Scripture <input id="scripture" placeholder="Romans 8"></label>
-      <label>Date <input id="date" type="date"></label>
-      <label>MP3 quality
-        <select id="bitrate">
-          <option value="48k">48 kbps mono (smallest)</option>
-          <option value="64k">64 kbps mono</option>
-          <option value="96k">96 kbps mono</option>
-          <option value="128k">128 kbps mono (current site files)</option>
-        </select>
-      </label>
-      <label class="check"><input id="normalize" type="checkbox" checked> Even out the volume (−16 LUFS)</label>
+  <!-- STEP 4 · PUBLISH ----------------------------------------------------->
+  <section class="step" data-step="4" hidden>
+    <h2>Publish</h2>
+    <div id="encoding" class="card center" hidden>
+      <div class="spinner"></div>
+      <p>Making the MP3…</p>
     </div>
-    <div class="cover">
-      <img id="coverImg" alt="" hidden>
-      <div>
-        <div>Cover image</div>
-        <label class="button secondary">Upload image…
-          <input type="file" id="coverFile" accept="image/*" hidden>
-        </label>
-        <button id="coverBrowse" class="secondary">Choose from NAS…</button>
-        <ul id="coverFiles" class="files small" hidden></ul>
+    <div id="summary" class="card" hidden>
+      <div class="post">
+        <img id="sumCover" alt="" hidden>
+        <div>
+          <div class="series" id="sumSeries"></div>
+          <h3 id="sumTitle"></h3>
+          <div class="hint" id="sumBy"></div>
+          <div class="scripture" id="sumScripture"></div>
+          <p id="sumDesc"></p>
+        </div>
       </div>
-    </div>
-    <div class="actions">
-      <button id="encode">Make MP3</button>
-      <span id="encodeMsg" class="muted"></span>
-    </div>
-    <div id="outputBox" hidden>
       <audio id="outPlayer" controls preload="none"></audio>
-      <a id="download" class="button secondary" download>Download</a>
-      <div class="actions">
-        <button id="draft">Upload as draft</button>
-        <button id="publish" class="danger">Upload &amp; publish</button>
-        <span id="publishMsg" class="muted"></span>
-      </div>
+      <div class="hint" id="sumFile"></div>
+      <div class="hint" id="sumNas"></div>
     </div>
+    <div id="result" class="card success" hidden></div>
+    <footer class="nav">
+      <button class="secondary" data-go="3">← Back to review</button>
+      <span class="actions">
+        <span id="publishMsg" class="hint"></span>
+        <a id="download" class="button secondary" download>Download MP3</a>
+        <button id="draft">Upload as draft</button>
+        <button id="publish" class="danger">Publish now</button>
+      </span>
+    </footer>
   </section>
 </main>
 <script src="app.js"></script>
