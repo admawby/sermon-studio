@@ -166,6 +166,30 @@ def get_job(jid: str):
     return must_job(jid)
 
 
+def cleanup_uploads(min_age=3600):
+    """Delete uploaded recordings/slides that no sermon uses (e.g. uploaded in step 1 but never
+    started). Files younger than min_age are kept, since someone may still be on step 1."""
+    used = set()
+    for j in jobs.recent(10_000):
+        o = jobs.get(j["id"])
+        if o:
+            used |= {o["source"], (o.get("output") or {}).get("path")}
+            if o.get("cover_upload"):
+                used.add(str(config.UPLOADS / o["cover_upload"].removeprefix("Uploads/")))
+    removed = []
+    for p in [*config.UPLOADS.glob("*"), *(config.UPLOADS / "images").glob("*"), *config.OUTPUT.glob("*")]:
+        try:
+            st = p.stat()  # uploads keep the original file's mtime, so use the arrival time (ctime) too
+            if p.is_file() and str(p) not in used and time.time() - max(st.st_mtime, st.st_ctime) > min_age:
+                p.unlink()
+                removed.append(p.name)
+        except OSError:
+            pass
+    if removed:
+        logging.getLogger("sermon").info("cleanup: removed unused uploads %s", removed)
+    return removed
+
+
 @app.delete("/api/jobs/{jid}")
 def delete_job(jid: str):
     """Remove a sermon from Sermon Studio: its cache, its uploaded recording/slide and its MP3 in
@@ -188,6 +212,7 @@ def delete_job(jid: str):
             removed.append(p.name)
         except (HTTPException, OSError):
             pass
+    removed += cleanup_uploads()
     return {"ok": True, "removed": removed}
 
 
@@ -543,6 +568,7 @@ def _job_for_message(mid):
 
 
 jobs.listeners.append(_on_job_event)
+threading.Thread(target=cleanup_uploads, daemon=True).start()
 discord_bot.start({
     "latest_job": _latest_auto_job, "job_for_message": _job_for_message, "job": jobs.get,
     "set_cover": _save_cover, "approve": _approve, "update": jobs.update,
