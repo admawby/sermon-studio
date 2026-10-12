@@ -36,5 +36,14 @@ WP_POST_TYPE = env("WP_POST_TYPE", "podcasts")
 WP_ALWAYS_CATEGORY = env("WP_ALWAYS_CATEGORY", "All Sermons")
 WP_DEFAULT_STATUS = env("WP_DEFAULT_STATUS", "draft")
 
+# --- automation: watch the archive for new recordings, report + approve over Discord ---
+WATCH_ENABLED = env("WATCH_ENABLED", "false").lower() in ("1", "true", "yes")
+WATCH_INTERVAL = int(env("WATCH_INTERVAL", "300"))
+WATCH_EXT = {e.strip().lower() for e in env("WATCH_EXT", ".wav").split(",") if e.strip()}
+DISCORD_TOKEN = env("DISCORD_TOKEN")
+DISCORD_USER_ID = int(env("DISCORD_USER_ID", "0") or 0)
+DISCORD_CHANNEL_ID = int(env("DISCORD_CHANNEL_ID", "0") or 0)
+PUBLIC_URL = env("PUBLIC_URL").rstrip("/")
+
 AUDIO_EXT = {".wav", ".mp3", ".m4a", ".flac", ".aif", ".aiff", ".ogg", ".mp4", ".mov"}
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp"}

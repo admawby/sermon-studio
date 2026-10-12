@@ -7,7 +7,9 @@ A self-hosted web app that turns a full Sunday service recording into a sermon p
 3. **Review:** check the cut on a waveform with a clickable, searchable transcript. Then edit the title, speaker, date, scripture, description and **series**. Series and speaker come from WordPress and default to those of the most recently edited sermon.
 4. **Publish:** the app encodes a small mono MP3 (volume-levelled, ID3-tagged, cover art embedded) and saves it next to the recording on the NAS. It shows a preview of the post, then uploads it to WordPress as a draft or publishes it.
 
-Everything except the WordPress upload runs on your own hardware. No audio leaves the house until you press upload.
+It can also run **hands-off**: it watches the NAS archive for new service recordings, analyzes them on its own and sends the result to you on **Discord** with clips of where the sermon starts and ends. You reply with the week's slide and press **Publish** (see [Automation](#automation-new-recordings--discord)).
+
+Everything except the WordPress upload and Discord runs on your own hardware. No audio leaves the house until you press upload.
 
 Built for a church website hosted on The Church Co's WordPress platform. The upload step is written for their podcast form, and everything else is generic.
 
@@ -158,6 +160,42 @@ The step bar at the top shows where you are. Click any finished step to go back 
    - **MP3 settings** sets the bitrate (64 kbps mono by default) and loudness levelling.
 4. **Publish.** The app makes the MP3 and copies it into the NAS folder. It then shows the post as it will appear, with a player for the finished MP3. Choose **Upload as draft** to check the post in WP Admin first (recommended), or **Publish now**. When it's done you get links to the post, and **Start the next sermon** starts over.
 
+## Automation: new recordings → Discord
+
+With `WATCH_ENABLED=true`, the app scans `ARCHIVE_ROOT` every `WATCH_INTERVAL` seconds for new `.wav` files.
+
+- On the first scan it records everything already there and processes none of it, so only recordings that appear afterwards are picked up.
+- A file counts as new once its size has stopped changing between two scans and it's at least 2 minutes old, so a recording that's still copying isn't analyzed half-finished.
+- Files the app copies into the archive itself (from **Save here**) are ignored.
+- The scan state is kept in `data/watch.json`. Delete that file to take a fresh baseline.
+
+For each new recording, the Discord bot:
+
+1. **Tells you it's analyzing** the recording, with the folder name and a time estimate.
+2. **Sends the proposed sermon** once the analysis is done. The message shows the title, series, speaker, date, scripture, description and start → end times, with two 20-second MP3 clips of how the sermon starts and ends. It has three buttons: **✅ Publish**, **📝 Save as draft** and **✏️ Open in Sermon Studio**, which opens the Review step if you want to change anything.
+3. **Asks for this week's sermon slide.** Reply to the message with the image, or just post it in the channel. It becomes the post's cover, and the Publish and draft buttons unlock once it has arrived.
+
+Pressing **Publish** or **Save as draft** makes the MP3 (with the proposed cut and details, or your edits if you changed them in the web app), saves it next to the recording on the NAS and posts it. The bot replies with the link. Only the Discord user in `DISCORD_USER_ID` can press the buttons or send slides.
+
+The series and speaker default to those of the last sermon post, the same as in the web app.
+
+### Creating the Discord bot
+
+1. **Create a server** (optional but tidy). In Discord, press **+** in the server list → **Create My Own** → **For me and my friends**, and name it, e.g. "Home Lab". Add a text channel such as `#sermon-studio`.
+2. **Turn on Developer Mode** so you can copy IDs: **User Settings → Advanced → Developer Mode**.
+3. **Create the application:** go to <https://discord.com/developers/applications> → **New Application**, and name it "Sermon Studio".
+4. **Set up the bot:** open the **Bot** tab.
+   - Press **Reset Token**, then copy the token. That's `DISCORD_TOKEN`; treat it like a password.
+   - Turn **on** *Message Content Intent*, which the bot needs to see the slide image you post.
+   - Turn **off** *Public Bot*, so only you can add it to servers.
+5. **Invite it to your server:** open **OAuth2 → URL Generator**. Tick the scope `bot`, then the bot permissions *View Channels*, *Send Messages*, *Attach Files*, *Embed Links* and *Read Message History*. Open the generated URL and pick your server.
+6. **Copy the IDs:**
+   - Right-click your own name → **Copy User ID**. That's `DISCORD_USER_ID`.
+   - Right-click the channel → **Copy Channel ID**. That's `DISCORD_CHANNEL_ID`. Leave it blank to get DMs instead.
+7. **Fill in `.env`:** set `DISCORD_TOKEN`, `DISCORD_USER_ID`, `DISCORD_CHANNEL_ID`, `PUBLIC_URL` (e.g. `http://192.168.1.10:8790`) and `WATCH_ENABLED=true`. Then run `docker compose up -d`.
+
+The log (`docker logs sermon-studio`) shows `discord: logged in as Sermon Studio#1234` when the bot is connected.
+
 ## API
 
 | Method | Path | |
@@ -188,6 +226,8 @@ app/
   transcribe.py   faster-whisper (auto CPU/CUDA)
   detect.py       sermon boundary detection (LLM + heuristic), title/scripture suggestion
   wordpress.py    wp-admin client: series/speaker sync, media upload, podcast form
+  watcher.py      polls the archive for new recordings
+  discord_bot.py  Discord notifications, approval buttons, slide upload
   static/         four-step wizard UI (no build step, no external JS)
 docker-compose.yml       app + ollama
 docker-compose.gpu.yml   GPU override

@@ -63,3 +63,10 @@ def write_tags(path: Path, tags: dict, cover: Path | None):
         mime = "image/png" if cover.suffix.lower() == ".png" else "image/jpeg"
         id3.add(APIC(encoding=3, mime=mime, type=3, desc="Cover", data=cover.read_bytes()))
     id3.save(path, v2_version=3)
+
+
+def clip(src: Path, out: Path, start: float, length: float):
+    """Short low-bitrate MP3 preview (for Discord)."""
+    run(["ffmpeg", "-y", "-v", "error", "-ss", f"{max(start, 0):.2f}", "-t", f"{length:.2f}", "-i", str(src),
+         "-vn", "-ac", "1", "-ar", "44100", "-b:a", "64k", str(out)])
+    return out

@@ -4,6 +4,7 @@ uvicorn[standard]==0.32.*
 python-multipart>=0.0.12
 faster-whisper>=1.1.0
 requests>=2.32
+discord.py>=2.4
 mutagen>=1.47
 # CUDA 12 runtime libs for ctranslate2 (unused on CPU, picked up automatically once a GPU is present)
 nvidia-cublas-cu12

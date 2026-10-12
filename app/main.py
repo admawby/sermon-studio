@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import shutil
 import threading
@@ -12,9 +13,11 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import archive, audio, config, jobs, transcribe
+from . import archive, audio, config, discord_bot, jobs, transcribe, watcher
 from .wordpress import WPError, wp
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+logging.getLogger("discord").setLevel(logging.WARNING)
 app = FastAPI(title="Sermon Studio")
 STATIC = Path(__file__).parent / "static"
 SETTINGS = config.DATA / "settings.json"
@@ -188,7 +191,9 @@ def _archive_files(job):
     jobs.update(job, archive={**job["archive"], "status": "saving", "message": "Copying the recording to the NAS…"})
     try:
         ours = set(job["archive"].get("written", []))
-        saved = [archive.copy_into(Path(job["source"]), folder, ours).name]
+        wav = archive.copy_into(Path(job["source"]), folder, ours)
+        watcher.mark_seen(wav)  # our own copy isn't a "new recording"
+        saved = [wav.name]
         if job.get("output"):
             saved.append(archive.copy_into(Path(job["output"]["path"]), folder, ours).name)
         jobs.update(job, archive={**job["archive"], "status": "saved", "written": sorted(ours | set(saved)),
@@ -269,25 +274,31 @@ def encode(jid: str, cut: Cut):
     job = must_job(jid)
     if cut.end - cut.start < 60:
         raise HTTPException(400, "Sermon must be at least a minute long")
-    out = config.OUTPUT / f"{config.FILE_PREFIX}{cut.date.replace('-', '')}.mp3"
-    cover = jobs.workdir(jid) / "cover.jpg"
     jobs.update(job, encoding=True, message="Encoding MP3…", cut=cut.model_dump())
-
-    def go():
-        try:
-            audio.encode(Path(job["source"]), out, cut.start, cut.end, cut.bitrate or config.MP3_BITRATE,
-                         cut.normalize, {"title": cut.title, "speaker": cut.speaker, "series": cut.series_name,
-                                         "date": cut.date, "scripture": cut.scripture}, cover)
-            jobs.update(job, encoding=False, message="Encoded", output={
-                "path": str(out), "name": out.name, "size": out.stat().st_size, "duration": cut.end - cut.start})
-            remember(speaker=cut.speaker, bitrate=cut.bitrate)
-            if job["archive"]["status"] == "saved":
-                _archive_files(job)
-        except Exception as e:
-            jobs.update(job, encoding=False, message=f"Encoding failed: {e}")
-
-    threading.Thread(target=go, daemon=True).start()
+    threading.Thread(target=do_encode, args=(job,), daemon=True).start()
     return {"ok": True}
+
+
+def do_encode(job):
+    """Make the MP3 for job["cut"] (and archive it next to the recording). Returns True on success."""
+    cut = job["cut"]
+    out = config.OUTPUT / f"{config.FILE_PREFIX}{cut['date'].replace('-', '')}.mp3"
+    jobs.update(job, encoding=True, message="Encoding MP3…")
+    try:
+        audio.encode(Path(job["source"]), out, cut["start"], cut["end"], cut.get("bitrate") or config.MP3_BITRATE,
+                     cut.get("normalize", True), {"title": cut["title"], "speaker": cut.get("speaker", ""),
+                                                  "series": cut.get("series_name", ""), "date": cut["date"],
+                                                  "scripture": cut.get("scripture", "")},
+                     jobs.workdir(job["id"]) / "cover.jpg")
+        jobs.update(job, encoding=False, message="Encoded", output={
+            "path": str(out), "name": out.name, "size": out.stat().st_size, "duration": cut["end"] - cut["start"]})
+        remember(speaker=cut.get("speaker"), bitrate=cut.get("bitrate"))
+        if job["archive"]["status"] == "saved":
+            _archive_files(job)
+        return True
+    except Exception as e:
+        jobs.update(job, encoding=False, message=f"Encoding failed: {e}")
+        return False
 
 
 # --- WordPress ------------------------------------------------------------------
@@ -327,21 +338,115 @@ def publish(jid: str, body: Publish):
         raise HTTPException(400, "Encode the MP3 first")
     if body.status not in ("draft", "publish"):
         raise HTTPException(400, "Bad status")
-    cover = jobs.workdir(jid) / "cover.jpg"
     jobs.update(job, publishing=True, message="Uploading to WordPress…")
-
-    def go():
-        try:
-            res = wp.publish(Path(job["output"]["path"]), cover if cover.exists() else None, job["cut"],
-                             body.status, lambda m: jobs.update(job, message=m))
-            _meta_cache["at"] = 0  # the new post is now the "last edited" one
-            jobs.update(job, publishing=False, published=res,
-                        message="Published" if res["status"] == "publish" else "Saved as draft")
-        except Exception as e:
-            jobs.update(job, publishing=False, message=f"Upload failed: {e}")
-
-    threading.Thread(target=go, daemon=True).start()
+    threading.Thread(target=do_publish, args=(job, body.status), daemon=True).start()
     return {"ok": True}
+
+
+def do_publish(job, status):
+    """Upload the encoded MP3 + cover and create the post. Returns the result dict or None."""
+    cover = jobs.workdir(job["id"]) / "cover.jpg"
+    jobs.update(job, publishing=True, message="Uploading to WordPress…")
+    try:
+        res = wp.publish(Path(job["output"]["path"]), cover if cover.exists() else None, job["cut"],
+                         status, lambda m: jobs.update(job, message=m))
+        _meta_cache["at"] = 0  # the new post is now the "last edited" one
+        jobs.update(job, publishing=False, published=res,
+                    message="Published" if res["status"] == "publish" else "Saved as draft")
+        return res
+    except Exception as e:
+        jobs.update(job, publishing=False, message=f"Upload failed: {e}")
+        return None
+
+
+# --- automation: new recordings on the NAS -> analysis -> Discord approval ------------------
+def _auto_cut(job):
+    """The cut + details the app proposes on its own (same defaults the Review step would show)."""
+    meta = wp_meta() if wp.configured else {}
+    sug, prop = job.get("suggest") or {}, job["proposal"]
+    series = meta.get("default_series")
+    return {
+        "start": prop["start"], "end": prop["end"], "title": sug.get("title") or f"Sermon {job['date']}",
+        "speaker": meta.get("default_speaker") or settings().get("speaker", ""),
+        "series": str(series or ""),
+        "series_name": next((s["name"] for s in meta.get("series", []) if s["id"] == series), ""),
+        "scripture": sug.get("scripture", ""), "description": sug.get("description", ""), "date": job["date"],
+        "bitrate": settings().get("bitrate") or config.MP3_BITRATE, "normalize": True,
+    }
+
+
+def _on_new_recording(path: Path):
+    job = jobs.create(path, virtual_of(path))
+    if job.get("published"):
+        return
+    jobs.update(job, auto=True)
+    _detect_archived(job)
+    if discord_bot.enabled():
+        mins = audio.duration(path) / 60
+        on_gpu = transcribe.model_info()["device"] == "cuda"
+        est = round(mins * 0.03 + 2) if on_gpu else round(mins * 0.25 + 12)
+        discord_bot.notify_analyzing(job, virtual_of(path.parent), est)
+
+
+def _on_job_event(job, event):
+    if not job.get("auto") or not discord_bot.enabled():
+        return
+    if event == "error":
+        discord_bot.notify_error(job)
+        return
+    cut = job.get("cut") or _auto_cut(job)
+    jobs.update(job, cut=cut)
+    work, src = jobs.workdir(job["id"]), Path(job["source"])
+    clips = (audio.clip(src, work / "clip-start.mp3", cut["start"], 20),
+             audio.clip(src, work / "clip-end.mp3", cut["end"] - 20, 20))
+    discord_bot.notify_ready(job, cut, clips)
+
+
+def _approve(jid, status):
+    job = jobs.get(jid)
+    if not job:
+        return "That sermon isn't in Sermon Studio any more.", True
+    if job.get("published"):
+        p = job["published"]
+        return f"Already posted ({p['status']}): {p.get('link') or p['edit']}", True
+    if job["status"] != "ready":
+        return "It's still being analyzed. Try again when it's done.", False
+    if not job.get("cover"):
+        return "📎 Send this week's sermon slide first (reply to the message with the image).", False
+    jobs.update(job, cut=job.get("cut") or _auto_cut(job))
+    if not do_encode(job):
+        return f"⚠️ {job['message']}", False
+    res = do_publish(job, status)
+    if not res:
+        return f"⚠️ {job['message']}", False
+    if res["status"] == "publish":
+        return f"🎉 **Published:** {res.get('link') or res['edit']}", True
+    return f"📝 **Saved as a draft.** Check it here: {res['edit']}", True
+
+
+def _latest_auto_job():
+    for j in jobs.recent(30):
+        job = jobs.get(j["id"])
+        if job.get("auto") and not job.get("published"):
+            return job
+    return None
+
+
+def _job_for_message(mid):
+    for j in jobs.recent(30):
+        job = jobs.get(j["id"])
+        if (job.get("discord") or {}).get("message") == mid:
+            return job
+    return None
+
+
+jobs.listeners.append(_on_job_event)
+discord_bot.start({
+    "latest_job": _latest_auto_job, "job_for_message": _job_for_message, "job": jobs.get,
+    "set_cover": _save_cover, "approve": _approve, "update": jobs.update,
+})
+if config.WATCH_ENABLED:
+    watcher.start(resolve(config.ARCHIVE_ROOT), _on_new_recording)
 
 
 # keep last: matches any /api/jobs/<id>/<name>

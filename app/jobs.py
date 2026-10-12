@@ -14,6 +14,15 @@ from . import audio, config, detect, transcribe
 _jobs: dict[str, dict] = {}
 _lock = threading.Lock()
 _queue: "queue.Queue[str]" = queue.Queue()
+listeners = []  # fn(job, event) with event "ready" | "error"; called from the worker thread
+
+
+def _notify(job, event):
+    for fn in listeners:
+        try:
+            fn(job, event)
+        except Exception:
+            traceback.print_exc()
 
 
 def job_id(src: Path):
@@ -95,7 +104,7 @@ def describe(job, start, end):
 
 
 def redetect(job):
-    update(job, status="queued", message="Waiting in line…", progress=0)
+    update(job, status="queued", message="Waiting in line…", progress=0, cut=None, discord=None)
     (workdir(job["id"]) / "proposal.json").unlink(missing_ok=True)
     _queue.put(job["id"])
 
@@ -145,6 +154,7 @@ def _analyze(job):
     sug = detect.suggest(segments, proposal["start"], proposal["end"])
     (work / "proposal.json").write_text(json.dumps(proposal))
     update(job, status="ready", message="Ready for review", proposal=proposal, suggest=sug)
+    _notify(job, "ready")
 
 
 def _worker():
@@ -156,6 +166,7 @@ def _worker():
         except Exception as e:
             traceback.print_exc()
             update(job, status="error", message=str(e))
+            _notify(job, "error")
 
 
 def _resume():
