@@ -21,6 +21,15 @@ logging.getLogger("discord").setLevel(logging.WARNING)
 logging.getLogger("discord.client").setLevel(logging.ERROR)  # "voice will NOT be supported": we don't use voice
 app = FastAPI(title="Sermon Studio")
 STATIC = Path(__file__).parent / "static"
+
+
+@app.middleware("http")
+async def revalidate_page(request, call_next):
+    """Make browsers check for a new version of the page instead of running a stale copy."""
+    resp = await call_next(request)
+    if not request.url.path.startswith("/api/"):
+        resp.headers["Cache-Control"] = "no-cache"
+    return resp
 SETTINGS = config.DATA / "settings.json"
 
 
@@ -160,6 +169,12 @@ def get_job(jid: str):
 def get_transcript(jid: str):
     must_job(jid)
     return jobs.transcript(jid)
+
+
+@app.post("/api/jobs/{jid}/cancel")
+def cancel(jid: str):
+    jobs.cancel(must_job(jid))
+    return {"ok": True}
 
 
 @app.post("/api/jobs/{jid}/redetect")

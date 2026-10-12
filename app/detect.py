@@ -1,6 +1,10 @@
 """Find where the sermon starts and ends in a transcribed service."""
+import http.client
 import json
 import re
+import socket
+import threading
+import urllib.parse
 
 import requests
 
@@ -60,13 +64,47 @@ def find_scripture(text):
     return max(counts, key=counts.get) if counts else ""
 
 
+class Cancelled(Exception):
+    pass
+
+
+should_stop = lambda: False  # set by jobs.py to the worker's cancel flag
+
+
 def _ollama(prompt, num_ctx=16384):
-    r = requests.post(f"{config.OLLAMA_URL}/api/generate", timeout=1800, json={
+    """POST /api/generate, but abortable: closing the socket makes Ollama stop generating."""
+    u = urllib.parse.urlsplit(config.OLLAMA_URL)
+    conn = http.client.HTTPConnection(u.hostname, u.port or 80, timeout=3600)
+    conn.request("POST", "/api/generate", json.dumps({
         "model": config.LLM_MODEL, "prompt": prompt, "format": "json", "stream": False,
         "options": {"temperature": 0, "num_ctx": num_ctx},
-    })
-    r.raise_for_status()
-    return json.loads(r.json()["response"])
+    }), {"Content-Type": "application/json"})
+    box = {}
+
+    def wait():
+        try:
+            r = conn.getresponse()
+            box["status"], box["body"] = r.status, r.read()
+        except Exception as e:
+            box["error"] = e
+
+    t = threading.Thread(target=wait, daemon=True)
+    t.start()
+    while t.is_alive():
+        t.join(0.5)
+        if should_stop():
+            try:
+                conn.sock.shutdown(socket.SHUT_RDWR)
+            except Exception:
+                pass
+            conn.close()
+            raise Cancelled()
+    conn.close()
+    if "error" in box:
+        raise box["error"]
+    if box["status"] != 200:
+        raise RuntimeError(f"ollama HTTP {box['status']}: {box['body'][:200]!r}")
+    return json.loads(json.loads(box["body"])["response"])
 
 
 def ensure_llm(status):
@@ -159,6 +197,8 @@ def suggest(segments, start, end):
             out["title"] = res.get("title", "").strip().strip('"')
             out["scripture"] = res.get("scripture", "").strip() or out["scripture"]
             out["description"] = res.get("description", "").strip()
+        except Cancelled:
+            raise
         except Exception:
             pass
     return out

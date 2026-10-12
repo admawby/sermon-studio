@@ -14,6 +14,10 @@ from . import audio, config, detect, transcribe
 _jobs: dict[str, dict] = {}
 _lock = threading.Lock()
 _queue: "queue.Queue[str]" = queue.Queue()
+_abort = threading.Event()  # set to stop the analysis that's running now
+_current = {"id": None}
+detect.should_stop = _abort.is_set
+TERMINAL = ("ready", "error", "cancelled")
 listeners = []  # fn(job, event) with event "ready" | "error"; called from the worker thread
 
 
@@ -103,6 +107,21 @@ def describe(job, start, end):
     threading.Thread(target=go, daemon=True).start()
 
 
+def cancel(job):
+    """Stop a queued or running analysis. A re-run keeps the previous result."""
+    if _current["id"] == job["id"]:
+        _abort.set()  # the worker notices within a second and calls _stopped()
+    elif job["status"] not in TERMINAL:
+        _stopped(job)
+
+
+def _stopped(job):
+    if job.get("proposal"):
+        update(job, status="ready", message="Stopped. Kept the previous result.", progress=1)
+    else:
+        update(job, status="cancelled", message="Analysis stopped.", progress=0)
+
+
 def redetect(job):
     update(job, status="queued", message="Waiting in line…", progress=0, cut=None, discord=None)
     (workdir(job["id"]) / "proposal.json").unlink(missing_ok=True)
@@ -136,8 +155,13 @@ def _analyze(job):
     else:
         info = transcribe.model_info()
         update(job, status="transcribing", message=f"Transcribing with {info['model']} on {info['device'].upper()}…")
-        segments = transcribe.transcribe(work / "speech.wav", total,
-                                         lambda f: update(job, progress=round(f, 3)) if f - job["progress"] > 0.005 else None)
+
+        def progress(f):
+            if _abort.is_set():
+                raise detect.Cancelled()
+            if f - job["progress"] > 0.005:
+                update(job, progress=round(f, 3))
+        segments = transcribe.transcribe(work / "speech.wav", total, progress)
         tpath.write_text(json.dumps(segments))
 
     update(job, status="detecting", message="Finding the sermon…", progress=1)
@@ -146,6 +170,8 @@ def _analyze(job):
     if detect.ensure_llm(status):
         try:
             proposal = detect.llm(segments, total, status)
+        except detect.Cancelled:
+            raise
         except Exception as e:
             proposal = None
             update(job, message=f"AI detection failed ({e}); using heuristic.")
@@ -161,19 +187,27 @@ def _worker():
     while True:
         jid = _queue.get()
         job = get(jid)
+        if not job or job["status"] != "queued":  # cancelled while waiting
+            continue
+        _abort.clear()
+        _current["id"] = jid
         try:
             _analyze(job)
+        except detect.Cancelled:
+            _stopped(job)
         except Exception as e:
             traceback.print_exc()
             update(job, status="error", message=str(e))
             _notify(job, "error")
+        finally:
+            _current["id"] = None
 
 
 def _resume():
     """Requeue jobs that were mid-analysis when the container stopped."""
     for p in sorted(config.WORK.glob("*/state.json"), key=lambda p: p.stat().st_mtime):
         job = get(p.parent.name)
-        if job and job["status"] not in ("ready", "error"):
+        if job and job["status"] not in TERMINAL:
             update(job, status="queued", message="Waiting in line…", progress=0)
             _queue.put(job["id"])
         elif job and (job.get("encoding") or job.get("publishing")):

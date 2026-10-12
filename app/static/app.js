@@ -58,7 +58,7 @@ $$("#stepper li").forEach((li) => li.onclick = () => go(+li.dataset.step));
 $$("[data-go]").forEach((b) => b.onclick = () => go(+b.dataset.go));
 
 function ensurePolling() {
-  const busy = job && (!["ready", "error"].includes(job.status) || job.encoding || job.publishing || job.describing
+  const busy = job && (!["ready", "error", "cancelled"].includes(job.status) || job.encoding || job.publishing || job.describing
     || job.archive?.status === "saving");
   if (busy && !poll) poll = setInterval(refresh, 1500);
   if (!busy && poll) { clearInterval(poll); poll = null; }
@@ -244,7 +244,7 @@ function renderAnalyze() {
   const idx = ORDER.indexOf(job.status);
   $$("#checklist li").forEach((li) => {
     const i = ORDER.indexOf(li.dataset.s);
-    li.className = job.status === "error" ? "" : i < idx ? "done" : i === idx ? "active" : "";
+    li.className = ["error", "cancelled"].includes(job.status) ? "" : i < idx ? "done" : i === idx ? "active" : "";
   });
   if (job.status === "error") {
     const active = $$("#checklist li").find((li) => !li.classList.contains("done"));
@@ -255,8 +255,20 @@ function renderAnalyze() {
   $("#jobProgress").value = overall;
   $("#jobMsg").textContent = job.status === "ready" ? "Done. The sermon has been found." : job.message;
   $("#toReview").disabled = job.status !== "ready";
+  const running = !["ready", "error", "cancelled"].includes(job.status);
+  $("#stopAnalysis").hidden = !running;
+  $("#restartAnalysis").hidden = !["error", "cancelled"].includes(job.status);
 }
 $("#toReview").onclick = () => go(3);
+$("#stopAnalysis").onclick = async () => {
+  if (!confirm("Stop the analysis?" + (job.proposal ? " The previous start/end times will be kept." : " You can start it again later."))) return;
+  await api(`/api/jobs/${job.id}/cancel`, { method: "POST" }).catch((e) => alert(e.message));
+  $("#jobMsg").textContent = "Stopping…";
+};
+$("#restartAnalysis").onclick = async () => {
+  await api(`/api/jobs/${job.id}/redetect`, { method: "POST" });
+  job = await api(`/api/jobs/${job.id}`); renderAnalyze(); ensurePolling();
+};
 
 // ======================================================================== step 3: review
 async function showReview() {
@@ -386,7 +398,7 @@ $(".cuts").onclick = (e) => {
 };
 $("#redetect").onclick = async (e) => {
   e.preventDefault();
-  if (!confirm("Run the sermon detection again? Your start/end changes will be replaced.")) return;
+  if (!confirm("Find the sermon again?\n\nThis re-runs the AI analysis (several minutes on the CPU) and replaces the current start/end times, title, scripture and description, including any edits you made.")) return;
   await api(`/api/jobs/${job.id}/redetect`, { method: "POST" });
   job = await api(`/api/jobs/${job.id}`); job.cut = null; formLoadedFor = null;
   go(2);
