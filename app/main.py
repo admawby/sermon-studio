@@ -18,6 +18,7 @@ from .wordpress import WPError, wp
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logging.getLogger("discord").setLevel(logging.WARNING)
+logging.getLogger("discord.client").setLevel(logging.ERROR)  # "voice will NOT be supported": we don't use voice
 app = FastAPI(title="Sermon Studio")
 STATIC = Path(__file__).parent / "static"
 SETTINGS = config.DATA / "settings.json"
