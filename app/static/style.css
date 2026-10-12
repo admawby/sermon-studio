@@ -8,6 +8,10 @@ body { margin: 0; font: 15px/1.45 system-ui, sans-serif; background: var(--bg); 
 header { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; padding: .8rem 1.5rem; background: #1f2d3d; color: #fff; }
 header h1 { margin: 0; font-size: 1.2rem; }
 header #engine { color: #b8c4d2; font-size: .85rem; }
+header .headRight { display: flex; align-items: center; gap: 1rem; }
+header #newSermon { background: #fff; color: #1f2d3d; font-weight: 600; }
+header #newSermon:hover { background: #dbe2ea; }
+@media (max-width: 720px) { header #engine { display: none; } }
 main { max-width: 1000px; margin: 0 auto 3rem; padding: 0 1rem; }
 h2 { font-size: 1.3rem; margin: 1.2rem 0 .3rem; }
 h3 { font-size: 1.02rem; margin: 0 0 .5rem; }

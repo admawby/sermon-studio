@@ -17,6 +17,7 @@ const niceDate = (d) => new Date(d + "T12:00").toLocaleDateString(undefined, { m
 
 let status, job = null, step = 1, segments = [], wpMeta = null, poll = null, formLoadedFor = null, waitingDescribe = false;
 const uploads = { audio: null, image: null };
+let uploading = 0;  // uploads in flight
 
 // ======================================================================== wizard
 function reachable(n) {
@@ -111,6 +112,8 @@ function upload(el, kind, file) {
   const xhr = new XMLHttpRequest();
   bar.hidden = false; bar.value = 0;
   label.textContent = `Uploading ${file.name}…`;
+  uploading++;
+  xhr.onloadend = () => uploading--;
   xhr.upload.onprogress = (e) => {
     bar.value = e.loaded / e.total;
     label.textContent = `Uploading ${file.name}: ${Math.round(e.loaded / e.total * 100)}% of ${size(e.total)}`;
@@ -472,7 +475,7 @@ function renderPublish() {
     $("#result").innerHTML = `<h3>${p.status === "publish" ? "Published! 🎉" : "Saved as a draft"}</h3>
       <p><a target="_blank" href="${p.edit}">Open it in WordPress</a>${p.status === "publish" && p.link ? ` · <a target="_blank" href="${p.link}">View it on the website</a>` : ""}</p>
       <button id="another">Start the next sermon</button>`;
-    $("#another").onclick = () => { job = null; history.replaceState(null, "", "#"); location.reload(); };
+    $("#another").onclick = startOver;
   }
   $("#publishMsg").textContent = job.publishing ? job.message
     : /failed/i.test(job.message || "") ? job.message
@@ -488,6 +491,18 @@ async function publish(st) {
 }
 $("#draft").onclick = () => publish("draft");
 $("#publish").onclick = () => publish("publish");
+
+// ======================================================================== start over
+function startOver() {
+  location.hash = "";
+  location.reload();
+}
+$("#newSermon").onclick = () => {
+  if (uploading && !confirm("A file is still uploading. Start over anyway? The upload will be cancelled.")) return;
+  if (job && (job.encoding || job.publishing) && !confirm("This sermon is still being processed. It will keep going in the background. Start a new one?")) return;
+  if (job && !confirm("Start a new sermon?\n\nThis one is saved. You can get back to it from “Continue a sermon you already started” in step 1.")) return;
+  startOver();
+};
 
 // ======================================================================== boot
 (async () => {
