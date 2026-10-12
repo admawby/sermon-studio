@@ -43,14 +43,15 @@ function go(n) {
 function renderStepper() {
   $$("#stepper li").forEach((li) => {
     const n = +li.dataset.step;
-    li.className = n === step ? "current" : n < furthest() ? "done" : "";
+    // everything before the step you're on (or the furthest one reached) is finished
+    li.className = n === step ? "current" : n < step || n < furthest() ? "done" : "";
     if (n !== step && reachable(n)) li.classList.add("reachable");
   });
 }
 function furthest() {
   if (!job) return 1;
   if (job.published) return 5;
-  if (job.output) return 4;
+  if (job.output || job.encoding) return 4;
   if (job.status === "ready") return 3;
   return 2;
 }
