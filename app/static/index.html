@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sermon Studio</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Sermon Studio</h1>
+  <span id="engine" class="muted"></span>
+</header>
+
+<main>
+  <section id="pick" class="card">
+    <h2>1. Pick the service recording</h2>
+    <div class="row">
+      <nav id="crumbs"></nav>
+      <label class="button secondary">Upload from this computer…
+        <input type="file" id="localAudio" accept="audio/*,.wav,.flac,.m4a,.mp3" hidden>
+      </label>
+    </div>
+    <div id="uploadProgress" class="muted" hidden></div>
+    <ul id="files" class="files"></ul>
+    <details id="recentBox">
+      <summary>Recent recordings</summary>
+      <ul id="recent" class="files"></ul>
+    </details>
+  </section>
+
+  <section id="review" class="card" hidden>
+    <h2>2. Check where the sermon starts and ends</h2>
+    <div id="jobName" class="muted"></div>
+    <div id="progressBox">
+      <div id="jobMsg"></div>
+      <progress id="jobProgress" max="1" value="0"></progress>
+    </div>
+    <div id="editor" hidden>
+      <p id="reason" class="muted"></p>
+      <div id="wave">
+        <img id="waveImg" alt="waveform">
+        <div id="region"></div>
+        <div id="playhead"></div>
+      </div>
+      <audio id="player" controls preload="metadata"></audio>
+      <div class="cuts">
+        <div>
+          <label>Start <input id="start" class="time"></label>
+          <button data-act="setStart" class="secondary">Set to playhead</button>
+          <button data-act="playStart" class="secondary">▶ Play from start</button>
+        </div>
+        <div>
+          <label>End <input id="end" class="time"></label>
+          <button data-act="setEnd" class="secondary">Set to playhead</button>
+          <button data-act="playEnd" class="secondary">▶ Last 20 s</button>
+        </div>
+        <div class="muted">Length: <b id="length"></b> · <a href="#" id="redetect">re-run detection</a></div>
+      </div>
+      <details open>
+        <summary>Transcript (click a line to listen, use the buttons to set start/end)</summary>
+        <input id="search" placeholder="Search transcript…">
+        <ol id="transcript"></ol>
+      </details>
+    </div>
+  </section>
+
+  <section id="details" class="card" hidden>
+    <h2>3. Sermon details</h2>
+    <div class="grid">
+      <label>Title <input id="title"></label>
+      <label>Speaker <input id="speaker" list="speakers" placeholder="Pastor's name"><datalist id="speakers"></datalist></label>
+      <label>Series
+        <select id="series"><option value="">Loading from WordPress…</option></select>
+        <small id="seriesNote" class="muted"></small>
+      </label>
+      <label>Scripture <input id="scripture" placeholder="Romans 8"></label>
+      <label>Date <input id="date" type="date"></label>
+      <label>MP3 quality
+        <select id="bitrate">
+          <option value="48k">48 kbps mono (smallest)</option>
+          <option value="64k">64 kbps mono</option>
+          <option value="96k">96 kbps mono</option>
+          <option value="128k">128 kbps mono (current site files)</option>
+        </select>
+      </label>
+      <label class="check"><input id="normalize" type="checkbox" checked> Even out the volume (−16 LUFS)</label>
+    </div>
+    <div class="cover">
+      <img id="coverImg" alt="" hidden>
+      <div>
+        <div>Cover image</div>
+        <label class="button secondary">Upload image…
+          <input type="file" id="coverFile" accept="image/*" hidden>
+        </label>
+        <button id="coverBrowse" class="secondary">Choose from NAS…</button>
+        <ul id="coverFiles" class="files small" hidden></ul>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="encode">Make MP3</button>
+      <span id="encodeMsg" class="muted"></span>
+    </div>
+    <div id="outputBox" hidden>
+      <audio id="outPlayer" controls preload="none"></audio>
+      <a id="download" class="button secondary" download>Download</a>
+      <div class="actions">
+        <button id="draft">Upload as draft</button>
+        <button id="publish" class="danger">Upload &amp; publish</button>
+        <span id="publishMsg" class="muted"></span>
+      </div>
+    </div>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

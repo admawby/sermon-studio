@@ -1,0 +1,31 @@
+# Sermon Studio: cut the sermon out of a service recording, encode it, post it to WordPress.
+# GPU: once the NVIDIA card + nvidia-container-toolkit are installed, start with
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+services:
+  sermon-studio:
+    build: .
+    image: local/sermon-studio
+    container_name: sermon-studio
+    restart: unless-stopped
+    user: "1000:1000"
+    env_file: .env
+    environment:
+      OLLAMA_URL: http://ollama:11434
+    ports:
+      - "8790:8790"
+    volumes:
+      - ./data:/data
+      - type: bind
+        source: ${NAS_PATH:-/mnt/nas}
+        target: /media/nas
+        read_only: true
+        bind: { propagation: rslave }
+      - ${LOCAL_PATH:-/srv/recordings}:/media/local:ro
+    depends_on: [ollama]
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: sermon-ollama
+    restart: unless-stopped
+    volumes:
+      - ./ollama:/root/.ollama

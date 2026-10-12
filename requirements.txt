@@ -1,0 +1,11 @@
+fastapi==0.115.*
+starlette>=0.40
+uvicorn[standard]==0.32.*
+python-multipart>=0.0.12
+faster-whisper>=1.1.0
+requests>=2.32
+mutagen>=1.47
+# CUDA 12 runtime libs for ctranslate2 (unused on CPU, picked up automatically once a GPU is present)
+nvidia-cublas-cu12
+nvidia-cudnn-cu12==9.*
+av<16
