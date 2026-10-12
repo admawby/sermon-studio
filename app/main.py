@@ -212,7 +212,9 @@ def _archive_files(job):
         saved = [wav.name]
         if job.get("output"):
             saved.append(archive.copy_into(Path(job["output"]["path"]), folder, ours).name)
-        jobs.update(job, archive={**job["archive"], "status": "saved", "written": sorted(ours | set(saved)),
+        # only files the app created count as "ours" (never the original recording itself)
+        made = {n for n in saved if not (folder / n).resolve() == Path(job["source"]).resolve()}
+        jobs.update(job, archive={**job["archive"], "status": "saved", "written": sorted(ours | made),
                                   "message": "Saved " + ", ".join(saved)})
     except Exception as e:
         jobs.update(job, archive={**job["archive"], "status": "error", "message": f"Couldn't save to the NAS: {e}"})
