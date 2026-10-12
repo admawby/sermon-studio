@@ -22,12 +22,97 @@
 </header>
 
 <main id="settingsView" hidden>
-  <h2>Settings</h2>
+  <h2 id="settingsTitle">Settings</h2>
+  <div id="setupHead" hidden>
+    <ol id="setupDots"></ol>
+  </div>
 
-  <section class="card">
+  <!-- setup only -->
+  <section class="card cfg setupOnly" id="cardWelcome" data-title="Welcome">
+    <h3>Welcome to Sermon Studio 👋</h3>
+    <p>Sermon Studio takes a full recording of a church service, finds the sermon with a local AI, makes a small
+      MP3 and posts it to your WordPress site. Everything runs on this server, so audio doesn't leave it until you publish.</p>
+    <p>This short setup (about 5 minutes) asks for:</p>
+    <ol>
+      <li><b>Storage:</b> the folder where your service recordings are kept.</li>
+      <li><b>WordPress:</b> the login used to post sermons.</li>
+      <li><b>Discord</b> (optional): a bot that tells you when a sermon is ready and lets you publish from your phone.</li>
+      <li><b>Monitoring</b> (optional): watch the recordings folder and analyze new services automatically.</li>
+    </ol>
+    <p class="hint">You can change all of this later under ⚙ Settings.</p>
+  </section>
+
+  <section class="card cfg" id="cardStorage" data-title="Storage">
+    <h3>Storage</h3>
+    <p class="hint">Folders from this server that Docker has made available to the app (set by <code>NAS_PATH</code> and <code>LOCAL_PATH</code> in <code>.env</code>):</p>
+    <ul id="rootList" class="status"></ul>
+    <label class="field">Recordings folder
+      <span class="hint">Where service recordings are saved. New recordings here are picked up automatically, and finished MP3s are saved next to them in <code>YYYY/MM - Month/YYYY_MM_DD</code> folders.</span>
+      <span class="folderRow"><code id="cfgArchive">…</code><button class="secondary small" id="pickArchive">Choose…</button></span>
+    </label>
+    <div id="archivePicker" class="picker" hidden>
+      <div class="row"><nav class="crumbs"></nav><button class="small" id="useArchive">Use this folder</button></div>
+      <ul class="files"></ul>
+    </div>
+    <label class="field">MP3 file name prefix
+      <span class="hint">Files are named <code><span id="prefixEx">Sermon_</span>YYYYMMDD.mp3</code>.</span>
+      <input id="cfgPrefix" placeholder="Sermon_">
+    </label>
+    <div class="actions cardActions"><button id="saveStorage">Save</button><span class="hint msg"></span></div>
+  </section>
+
+  <section class="card cfg" id="cardWordpress" data-title="WordPress">
+    <h3>WordPress</h3>
+    <p class="hint">The site the sermons are posted to. Made for The Church Co's WordPress (the “Podcasts” post type).
+      Use a login without two-factor sign-in. The password is stored only on this server.</p>
+    <div class="grid">
+      <label class="wide">Site address <input id="cfgWpUrl" placeholder="https://www.example-church.org"></label>
+      <label>Username or email <input id="cfgWpUser" autocomplete="off"></label>
+      <label>Password <input id="cfgWpPass" type="password" autocomplete="new-password"></label>
+    </div>
+    <div class="actions cardActions"><button id="saveWordpress">Save</button><button class="secondary" id="testWordpress">Test login</button><span class="hint msg"></span></div>
+  </section>
+
+  <section class="card cfg" id="cardDiscord" data-title="Discord">
+    <h3>Discord bot <small class="hint">(optional)</small></h3>
+    <p class="hint">The bot posts when a sermon is ready, with clips of where it starts and ends, and lets you publish
+      with one tap. It only connects out to Discord, so no ports need to be opened.</p>
+    <details class="howto">
+      <summary>How to create the bot (5 minutes)</summary>
+      <ol>
+        <li>In Discord, make a server for yourself if you like (<b>+</b> → <i>Create My Own</i>) and add a channel such as <code>#sermon-studio</code>.</li>
+        <li>Turn on <b>User Settings → Advanced → Developer Mode</b> so you can copy IDs.</li>
+        <li>Open <a href="https://discord.com/developers/applications" target="_blank" rel="noopener">discord.com/developers/applications</a> → <b>New Application</b> → name it “Sermon Studio”.</li>
+        <li><b>Installation</b> tab: set <i>Install Link</i> to <b>None</b> and save.</li>
+        <li><b>Bot</b> tab:
+          <ul>
+            <li>Turn <b>Public Bot</b> off and turn <b>Message Content Intent</b> on, then save.</li>
+            <li>Press <b>Reset Token</b> and copy the token into the box below.</li>
+          </ul></li>
+        <li><b>OAuth2 → URL Generator</b>:
+          <ul>
+            <li>Tick the scope <b>bot</b>.</li>
+            <li>Tick the permissions <i>View Channels, Send Messages, Attach Files, Embed Links, Read Message History</i>.</li>
+            <li>Open the generated link and add the bot to your server.</li>
+          </ul></li>
+        <li>Right-click your own name → <b>Copy User ID</b>, and right-click the channel → <b>Copy Channel ID</b>.</li>
+      </ol>
+    </details>
+    <div class="grid">
+      <label class="wide">Bot token <input id="cfgDcToken" type="password" autocomplete="new-password"></label>
+      <label>Your user ID <input id="cfgDcUser" inputmode="numeric" placeholder="e.g. 123456789012345678"></label>
+      <label>Channel ID <small class="hint">(blank = direct messages)</small><input id="cfgDcChannel" inputmode="numeric"></label>
+      <label class="wide">This app's address <small class="hint">(for the “Open in Sermon Studio” button)</small>
+        <span class="folderRow"><input id="cfgPublicUrl" placeholder="http://server:8790"><button class="secondary small" id="useThisUrl">Use this page's address</button></span></label>
+    </div>
+    <p id="discordState"></p>
+    <div class="actions cardActions"><button id="saveDiscord">Save</button><button class="secondary" id="testDiscord">Send a test message</button><span class="hint msg"></span></div>
+  </section>
+
+  <section class="card cfg" id="cardMonitor" data-title="Monitoring">
     <div class="row">
       <div>
-        <h3>Watch the NAS for new recordings</h3>
+        <h3>Watch for new recordings</h3>
         <p class="hint" id="watchWhat"></p>
       </div>
       <label class="switch"><input type="checkbox" id="watchToggle"><span></span></label>
@@ -41,10 +126,26 @@
       Changes take effect right away and are remembered after a restart.</p>
   </section>
 
-  <section class="card">
-    <h3>Connections</h3>
-    <ul id="connections" class="status"></ul>
+  <section class="card cfg settingsOnly" id="cardAbout">
+    <h3>About</h3>
+    <ul id="aboutList" class="status"></ul>
+    <div class="actions"><button class="secondary small" id="rerunSetup">Run the setup wizard again</button></div>
   </section>
+
+  <!-- setup only -->
+  <section class="card cfg setupOnly" id="cardDone" data-title="Done">
+    <h3>You're all set 🎉</h3>
+    <ul id="doneList" class="status"></ul>
+    <p>Next: open <b>Sermons</b>, drop in a service recording and a sermon slide, and follow the four steps.</p>
+  </section>
+
+  <footer class="nav" id="setupNav" hidden>
+    <button class="secondary" id="setupBack">← Back</button>
+    <span class="actions">
+      <button class="secondary" id="setupSkip">Skip for now</button>
+      <button id="setupNext">Next →</button>
+    </span>
+  </footer>
 </main>
 
 <div id="wizardView">
@@ -129,6 +230,8 @@
         <li data-s="describing"><span class="st"></span>Write a title, scripture and description</li>
       </ul>
       <progress id="jobProgress" max="1" value="0"></progress>
+      <label class="check notify"><input type="checkbox" id="notifyMe"> 🔔 Notify me on Discord when it's done
+        <small id="notifyHint" class="hint"></small></label>
       <p id="jobMsg" class="hint"></p>
       <div class="actions">
         <button id="stopAnalysis" class="secondary small">■ Stop analysis</button>

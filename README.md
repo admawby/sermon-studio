@@ -60,7 +60,14 @@ mkdir -p data ollama
 docker compose up -d --build
 ```
 
-Open **http://<server>:8790**.
+Open **http://<server>:8790**. The first visit starts a **setup wizard** that walks you through:
+
+1. **Storage:** pick the recordings folder.
+2. **WordPress:** enter the login and test it.
+3. **Discord:** create the bot (instructions included), then send a test message. Optional.
+4. **Monitoring:** turn automatic watching on. Optional.
+
+Everything can be changed later under **⚙ Settings**. Values saved there are stored in `data/settings.json`, which only the owner can read, and override the matching `.env` values. So the only `.env` settings you strictly need are the folder mounts (`NAS_PATH`, `LOCAL_PATH`, `BROWSE_ROOTS`).
 
 ### Paths
 
@@ -152,13 +159,13 @@ ACF fields are looked up by name, so it keeps working if the field keys change. 
 The step bar at the top shows where you are. Click any finished step to go back to it.
 
 1. **Upload.** Drop the WAV into the left box and the sermon slide into the right box, or tap a box to choose a file. Each box shows upload progress and turns green when the file is done. **Next: Analyze** starts the work. If you leave out the image, the app asks before continuing, and you can add one in Review.
-2. **Analyze.** Check the suggested NAS folder. It's marked *existing folder* or *new folder*. Press **Save here**, or **Choose a different folder…** first. The checklist shows each stage: convert, transcribe (with %), find the sermon, write the title and description. On a CPU this takes about 20–25 minutes for a 65-minute service, and with a GPU a couple of minutes. You can close the tab and come back later via **Continue a sermon you already started** in step 1.
+2. **Analyze.** Check the suggested NAS folder. It's marked *existing folder* or *new folder*. Press **Save here**, or **Choose a different folder…** first. The checklist shows each stage: convert, transcribe (with %), find the sermon, write the title and description. On a CPU this takes about 20–25 minutes for a 65-minute service, and with a GPU a couple of minutes. You can close the tab and come back later via **Continue a sermon you already started** in step 1. Tick **🔔 Notify me on Discord when it's done** to get the same Discord message as for automatically found recordings, with clips and Publish/Draft buttons.
 3. **Review.**
    - The shaded part of the waveform is the sermon. Click the waveform to listen anywhere. **▶ Listen** and **▶ Last 20 s** play the edges.
    - Hover a transcript line and press **start here** or **end here**, type a time (`H:MM:SS`), or play to a point and press **Set to playhead**. Search finds phrases like "let's pray".
    - Edit the title, speaker, date, series, scripture (excerpt) and description (content). **✨ Write it again** asks the AI for a new title, scripture and description based on your adjusted cut.
    - **MP3 settings** sets the bitrate (64 kbps mono by default) and loudness levelling.
-4. **Publish.** The app makes the MP3 and copies it into the NAS folder. It then shows the post as it will appear, with a player for the finished MP3. Choose **Upload as draft** to check the post in WP Admin first (recommended), or **Publish now**. When it's done you get links to the post, and **Start the next sermon** starts over.
+4. **Publish.** The app makes the MP3 (with a live progress bar) and copies it, plus the sermon slide as `<prefix>YYYYMMDD.jpg`, into the NAS folder. It then shows the post as it will appear, with a player for the finished MP3. Choose **Upload as draft** to check the post in WP Admin first (recommended), or **Publish now**. After a draft, the buttons become **Update the draft** and **Publish the draft**: these change that same post and only upload the MP3 or slide again if they've changed. If you already published or deleted the draft in WP Admin, the app notices and doesn't make a duplicate. When it's done you get links to the post, and **Start the next sermon** starts over.
 
 ## Automation: new recordings → Discord
 
@@ -194,7 +201,7 @@ The series and speaker default to those of the last sermon post, the same as in 
 6. **Copy the IDs:**
    - Right-click your own name → **Copy User ID**. That's `DISCORD_USER_ID`.
    - Right-click the channel → **Copy Channel ID**. That's `DISCORD_CHANNEL_ID`. Leave it blank to get DMs instead.
-7. **Fill in `.env`:** set `DISCORD_TOKEN`, `DISCORD_USER_ID`, `DISCORD_CHANNEL_ID`, `PUBLIC_URL` (e.g. `http://192.168.1.10:8790`) and `WATCH_ENABLED=true`. Then run `docker compose up -d`.
+7. **Enter them in the app:** paste the token and IDs into **⚙ Settings → Discord bot** (or the setup wizard) and press **Send a test message**. The bot reconnects right away, with no restart needed. Alternatively, set `DISCORD_TOKEN`, `DISCORD_USER_ID`, `DISCORD_CHANNEL_ID` and `PUBLIC_URL` in `.env`.
 
 The log (`docker logs sermon-studio`) shows `discord: logged in as Sermon Studio#1234` when the bot is connected.
 
@@ -217,6 +224,9 @@ The log (`docker logs sermon-studio`) shows `discord: logged in as Sermon Studio
 | POST | `/api/jobs/{id}/publish` `{status: draft\|publish}` | upload to WordPress |
 | GET | `/api/wp/meta`, `/api/wp/discover` | series list and default; field discovery |
 | GET | `/api/settings` | monitoring status + Discord/WordPress/AI connection status |
+| GET / POST | `/api/config` (`{values}`) | storage/WordPress/Discord settings (secrets are never returned) |
+| POST | `/api/config/test/wordpress` · `/api/config/test/discord` | test the login · send a Discord test message |
+| POST | `/api/jobs/{id}/notify` `{on}` | Discord message when this analysis is done |
 | POST | `/api/settings/watch` `{enabled, catch_up}` · `/api/settings/watch/scan` | turn monitoring on/off · check the NAS now |
 
 ## Project layout

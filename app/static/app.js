@@ -260,11 +260,21 @@ function renderAnalyze() {
   $("#jobProgress").value = overall;
   $("#jobMsg").textContent = job.status === "ready" ? "Done. The sermon has been found." : job.message;
   $("#toReview").disabled = job.status !== "ready";
+  const nb = $("#notifyMe"), done = ["ready", "error", "cancelled"].includes(job.status);
+  nb.checked = !!(job.notify || job.auto);
+  nb.disabled = !status.discord || !!job.auto || done;
+  $("#notifyHint").textContent = !status.discord ? "(set up the Discord bot in Settings first)"
+    : job.auto ? "(always on for recordings found on the NAS)" : done && job.notify ? "(sent)" : "";
+  nb.closest("label").hidden = done && !job.notify && !job.auto;
   const running = !["ready", "error", "cancelled"].includes(job.status);
   $("#stopAnalysis").hidden = !running;
   $("#restartAnalysis").hidden = !["error", "cancelled"].includes(job.status);
 }
 $("#toReview").onclick = () => go(3);
+$("#notifyMe").onchange = async (e) => {
+  try { await api(`/api/jobs/${job.id}/notify`, { method: "POST", body: { on: e.target.checked } }); job.notify = e.target.checked; }
+  catch (err) { alert(err.message); e.target.checked = !e.target.checked; }
+};
 $("#stopAnalysis").onclick = async () => {
   if (!confirm("Stop the analysis?" + (job.proposal ? " The previous start/end times will be kept." : " You can start it again later."))) return;
   await api(`/api/jobs/${job.id}/cancel`, { method: "POST" }).catch((e) => alert(e.message));
@@ -479,26 +489,32 @@ function renderPublish() {
   }
   if (/Encoding failed/.test(job.message || "")) { $("#encoding").hidden = true; $("#publishMsg").textContent = job.message; }
   const ready = !job.encoding && job.output && !job.publishing;
+  const p0 = job.published, isDraft = p0?.status === "draft", isLive = p0?.status === "publish";
+  $("#draft").textContent = isDraft ? "Update the draft" : "Upload as draft";
+  $("#publish").textContent = isDraft ? "Publish the draft" : "Publish now";
+  $("#draft").hidden = $("#publish").hidden = isLive;
   $("#draft").disabled = $("#publish").disabled = !ready || !status.wp_configured;
   $("#download").hidden = !job.output || job.encoding;
   const p = job.published;
   $("#result").hidden = !p;
   if (p) {
     $("#result").innerHTML = `<h3>${p.status === "publish" ? "Published! 🎉" : "Saved as a draft"}</h3>
+      ${p.status === "draft" ? "<p class=hint>Check it in WordPress, then use <b>Publish the draft</b> below. It publishes this same post without uploading again.</p>" : ""}
       <p><a target="_blank" href="${p.edit}">Open it in WordPress</a>${p.status === "publish" && p.link ? ` · <a target="_blank" href="${p.link}">View it on the website</a>` : ""}</p>
       <button id="another">Start the next sermon</button>`;
     $("#another").onclick = startOver;
   }
   $("#publishMsg").textContent = job.publishing ? job.message
     : /failed/i.test(job.message || "") ? job.message
-    : !status.wp_configured ? "Add the WordPress login to .env to enable uploading." : "";
+    : !status.wp_configured ? "Set up WordPress under ⚙ Settings to enable uploading." : "";
 }
 async function publish(st) {
-  if (st === "publish" && !confirm("Publish this sermon on the church website now?")) return;
-  if (job.published && !confirm("This sermon was already uploaded once. Upload it again as a new post?")) return;
+  const isDraft = job.published?.status === "draft";
+  if (st === "publish" && !confirm(isDraft ? "Publish the draft on the church website now?" : "Publish this sermon on the church website now?")) return;
+  if (st === "draft" && isDraft && !confirm("Update the existing draft with the current MP3 and details?")) return;
   try {
     await api(`/api/jobs/${job.id}/publish`, { method: "POST", body: { status: st } });
-    job.publishing = true; job.message = "Uploading to WordPress…"; renderPublish(); ensurePolling();
+    job.publishing = true; job.message = isDraft ? "Updating WordPress…" : "Uploading to WordPress…"; renderPublish(); ensurePolling();
   } catch (e) { alert(e.message); }
 }
 $("#draft").onclick = () => publish("draft");
@@ -516,55 +532,123 @@ $("#newSermon").onclick = () => {
   startOver();
 };
 
-// ======================================================================== settings
-let settingsPoll = null;
+// ======================================================================== settings + first-run setup
+let settingsPoll = null, cfg = null, setupStep = null;
+const SETUP = ["cardWelcome", "cardStorage", "cardWordpress", "cardDiscord", "cardMonitor", "cardDone"];
 const ago = (t) => {
   if (!t) return "never";
   const s = Math.round(Date.now() / 1000 - t);
   return s < 60 ? "just now" : s < 3600 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)} h ago`;
 };
+const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 function showTab(tab) {
   $("#settingsView").hidden = tab !== "settings";
   $("#wizardView").hidden = tab === "settings";
   $$("#tabs a").forEach((a) => a.classList.toggle("active", a.dataset.tab === tab));
   clearInterval(settingsPoll); settingsPoll = null;
-  if (tab === "settings") { loadSettings(); settingsPoll = setInterval(loadSettings, 5000); }
+  if (tab === "settings") { loadSettings(true); settingsPoll = setInterval(() => loadSettings(false), 5000); }
 }
 $$("#tabs a").forEach((a) => a.onclick = (e) => { e.preventDefault(); showTab(a.dataset.tab); });
 
-async function loadSettings() {
-  renderSettings(await api("/api/settings"));
+async function loadSettings(fillForms) {
+  const [s, c] = await Promise.all([api("/api/settings"), api("/api/config")]);
+  cfg = c;
+  renderSettings(s);
+  renderConfig(fillForms);
 }
 
+// ---- monitoring + about
 function renderSettings(s) {
   const w = s.watch;
   $("#watchToggle").checked = w.enabled;
   $("#watchWhat").textContent = `Checks ${w.folder} every ${Math.round(w.interval / 60)} min for new ${w.types.join(", ")} files.`;
   $("#scanNow").disabled = !w.enabled;
-  const parts = [w.enabled ? "<b class=ok>On</b>" : "<b class=bad>Off</b>",
-    `Last checked: ${ago(w.last_scan)}`, `${w.seen} recordings already known`];
+  const parts = [w.enabled ? "<b class=ok>On</b>" : "<b class=bad>Off</b>", `Last checked: ${ago(w.last_scan)}`, `${w.seen} recordings already known`];
   if (w.pending) parts.push(`${w.pending} new file(s) still copying`);
-  if (w.last_found) parts.push(`Last new recording: ${w.last_found.path.split("/").pop()} (${ago(w.last_found.at)})`);
-  if (w.last_error) parts.push(`<span class=bad>Last check failed: ${w.last_error}</span>`);
+  if (w.last_found) parts.push(`Last new recording: ${esc(w.last_found.path.split("/").pop())} (${ago(w.last_found.at)})`);
+  if (w.last_error) parts.push(`<span class=bad>Last check failed: ${esc(w.last_error)}</span>`);
   $("#watchStatus").innerHTML = parts.join(" · ");
-  const d = s.discord, ai = s.ai;
-  const rows = [
-    ["Discord", !d.configured ? "<span class=bad>Not set up</span> (DISCORD_TOKEN / DISCORD_USER_ID in .env)"
-      : d.connected ? `<span class=ok>Connected</span> as ${d.name}${d.channel ? " · posts in your channel" : " · sends DMs"}`
-      : "<span class=bad>Not connected</span>. Check the token and the container log."],
-    ["WordPress", s.wordpress.configured ? `<span class=ok>Login set</span> · ${s.wordpress.url}` : "<span class=bad>Login not set</span> (WP_USER / WP_PASSWORD in .env)"],
-    ["AI", `${ai.model} on ${ai.device.toUpperCase()}${ai.llm ? ` + ${ai.llm}` : " (no LLM)"}`],
-  ];
-  $("#connections").innerHTML = rows.map(([k, v]) => `<li><span class="k">${k}</span><span>${v}</span></li>`).join("");
+  const ai = s.ai;
+  $("#aboutList").innerHTML = [["AI", `${esc(ai.model)} on ${ai.device.toUpperCase()}${ai.llm ? ` + ${esc(ai.llm)}` : " (no LLM)"}`],
+    ["Source", `<a href="https://github.com/admawby/sermon-studio" target="_blank" rel="noopener">github.com/admawby/sermon-studio</a>`]]
+    .map(([k, v]) => `<li><span class="k">${k}</span><span>${v}</span></li>`).join("");
 }
 
+// ---- storage / WordPress / Discord forms
+function renderConfig(fillForms) {
+  const v = cfg.values;
+  $("#rootList").innerHTML = cfg.roots.map((r) => `<li><span class="k">${esc(r.name)}</span><span>
+    ${!r.exists ? "<span class=bad>✗ missing</span>" : r.writable ? "<span class=ok>✓ read &amp; write</span>" : "<span class=bad>read-only</span>"}
+    · <code>${esc(r.path)}</code>${r.exists && !r.items && r.name !== "Uploads" ? " · <span class=bad>empty: is the host folder mounted?</span>" : ""}</span></li>`).join("");
+  $("#cfgArchive").textContent = v.ARCHIVE_ROOT || "(not set)";
+  $("#cfgArchive").className = cfg.archive_ok ? "" : "bad";
+  const d = cfg.discord;
+  $("#discordState").innerHTML = !d.configured ? "<span class=hint>Not set up.</span>"
+    : d.connected ? `<span class=ok>● Connected</span> as ${esc(d.name)}`
+    : d.error ? `<span class=bad>● ${esc(d.error)}</span>` : "<span class=hint>● Connecting…</span>";
+  if (!fillForms) return;
+  $("#cfgPrefix").value = v.FILE_PREFIX; $("#prefixEx").textContent = v.FILE_PREFIX || "Sermon_";
+  $("#cfgWpUrl").value = v.WP_URL; $("#cfgWpUser").value = v.WP_USER;
+  $("#cfgWpPass").value = ""; $("#cfgWpPass").placeholder = v.WP_PASSWORD.set ? "•••••••• saved (leave blank to keep)" : "";
+  $("#cfgDcToken").value = ""; $("#cfgDcToken").placeholder = v.DISCORD_TOKEN.set ? "•••••••• saved (leave blank to keep)" : "Paste the bot token";
+  $("#cfgDcUser").value = v.DISCORD_USER_ID || ""; $("#cfgDcChannel").value = v.DISCORD_CHANNEL_ID || "";
+  $("#cfgPublicUrl").value = v.PUBLIC_URL || "";
+}
+$("#cfgPrefix").oninput = (e) => $("#prefixEx").textContent = e.target.value || "Sermon_";
+$("#useThisUrl").onclick = () => $("#cfgPublicUrl").value = location.origin;
+
+function cardMsg(card, text, ok) {
+  const m = $(`#${card} .msg`);
+  m.textContent = text; m.className = "hint msg" + (ok === true ? " ok" : ok === false ? " bad" : "");
+}
+async function saveValues(card, values) {
+  cardMsg(card, "Saving…");
+  try {
+    cfg = await api("/api/config", { method: "POST", body: { values } });
+    renderConfig(false);
+    cardMsg(card, "Saved.", true);
+    return true;
+  } catch (e) { cardMsg(card, e.message, false); return false; }
+}
+const saveStorage = () => saveValues("cardStorage", { ARCHIVE_ROOT: $("#cfgArchive").textContent.replace("(not set)", ""), FILE_PREFIX: $("#cfgPrefix").value });
+const saveWordpress = () => saveValues("cardWordpress", { WP_URL: $("#cfgWpUrl").value, WP_USER: $("#cfgWpUser").value, WP_PASSWORD: $("#cfgWpPass").value });
+const saveDiscord = () => saveValues("cardDiscord", { DISCORD_TOKEN: $("#cfgDcToken").value, DISCORD_USER_ID: $("#cfgDcUser").value,
+  DISCORD_CHANNEL_ID: $("#cfgDcChannel").value, PUBLIC_URL: $("#cfgPublicUrl").value });
+$("#saveStorage").onclick = saveStorage;
+$("#saveWordpress").onclick = saveWordpress;
+$("#saveDiscord").onclick = saveDiscord;
+
+async function runTest(card, url, save) {
+  if (!(await save())) return false;
+  cardMsg(card, card === "cardDiscord" ? "Connecting to Discord and sending a test message…" : "Logging in…");
+  try { const r = await api(url, { method: "POST" }); cardMsg(card, r.message, true); return true; }
+  catch (e) { cardMsg(card, e.message, false); return false; }
+  finally { cfg = await api("/api/config"); renderConfig(false); }
+}
+$("#testWordpress").onclick = () => runTest("cardWordpress", "/api/config/test/wordpress", saveWordpress);
+$("#testDiscord").onclick = () => runTest("cardDiscord", "/api/config/test/discord", saveDiscord);
+
+$("#pickArchive").onclick = () => {
+  const box = $("#archivePicker"); box.hidden = !box.hidden;
+  const start = cfg.values.ARCHIVE_ROOT || "";
+  if (!box.hidden) browse(box, start, "dir", () => {}).catch(() => browse(box, "", "dir", () => {}));
+};
+$("#useArchive").onclick = () => {
+  const p = $("#archivePicker").dataset.path;
+  if (!p) return alert("Open one of the folders first.");
+  $("#cfgArchive").textContent = p; $("#cfgArchive").className = "";
+  $("#archivePicker").hidden = true;
+  if (setupStep === null) saveStorage();
+};
+
+// ---- monitoring switch
 $("#watchToggle").onchange = async (e) => {
   const on = e.target.checked;
   let catchUp = false;
-  if (on) {
+  if (on && setupStep === null) {
     catchUp = confirm("Turn on NAS monitoring.\n\nWere any recordings added while it was off that you want analyzed too?\n\nOK = yes, analyze those as well\nCancel = no, only watch for recordings added from now on");
-  } else if (!confirm("Turn off NAS monitoring? New recordings won't be analyzed or sent to Discord until you turn it back on.")) {
+  } else if (!on && setupStep === null && !confirm("Turn off NAS monitoring? New recordings won't be analyzed or sent to Discord until you turn it back on.")) {
     e.target.checked = true; return;
   }
   e.target.disabled = true;
@@ -575,8 +659,68 @@ $("#watchToggle").onchange = async (e) => {
 $("#scanNow").onclick = async () => {
   await api("/api/settings/watch/scan", { method: "POST" }).catch((e) => alert(e.message));
   $("#scanMsg").textContent = "Checking…";
-  setTimeout(() => { $("#scanMsg").textContent = ""; loadSettings(); }, 4000);
+  setTimeout(() => { $("#scanMsg").textContent = ""; loadSettings(false); }, 4000);
 };
+
+// ---- first-run setup wizard: the same cards, one at a time
+async function enterSetup() {
+  document.body.classList.add("setupMode");
+  $("#settingsView").classList.add("setup");
+  $("#settingsView").hidden = false; $("#wizardView").hidden = true;
+  $("#settingsTitle").textContent = "Set up Sermon Studio";
+  $("#setupHead").hidden = false; $("#setupNav").hidden = false;
+  setupStep = 0;
+  await loadSettings(true);
+  if (!$("#cfgPublicUrl").value) $("#cfgPublicUrl").value = location.origin;
+  renderSetup();
+}
+function renderSetup() {
+  SETUP.forEach((id, i) => $("#" + id).classList.toggle("current", i === setupStep));
+  $("#setupDots").innerHTML = SETUP.map((id, i) =>
+    `<li class="${i === setupStep ? "current" : i < setupStep ? "done" : ""}">${i + 1}. ${$("#" + id).dataset.title}</li>`).join("");
+  const id = SETUP[setupStep];
+  $("#setupBack").style.visibility = setupStep ? "visible" : "hidden";
+  $("#setupSkip").hidden = !["cardWordpress", "cardDiscord", "cardMonitor"].includes(id);
+  $("#setupNext").textContent = id === "cardWelcome" ? "Let's start →" : id === "cardDone" ? "Finish" : "Save & continue →";
+  if (id === "cardMonitor") $("#watchToggle").disabled = !cfg.archive_ok;
+  if (id === "cardDone") renderDone();
+  window.scrollTo({ top: 0 });
+}
+function renderDone() {
+  const v = cfg.values, d = cfg.discord;
+  $("#doneList").innerHTML = [
+    ["Recordings", cfg.archive_ok ? `<code>${esc(v.ARCHIVE_ROOT)}</code>` : "<span class=bad>not set</span>"],
+    ["WordPress", cfg.wordpress.configured ? `<span class=ok>✓</span> ${esc(v.WP_URL)}` : "<span class=hint>not set up (needed to publish)</span>"],
+    ["Discord", d.connected ? `<span class=ok>✓</span> ${esc(d.name)}` : d.configured ? "<span class=bad>set up but not connected</span>" : "<span class=hint>skipped</span>"],
+    ["Monitoring", $("#watchToggle").checked ? "<span class=ok>on</span>" : "<span class=hint>off</span>"],
+  ].map(([k, x]) => `<li><span class="k">${k}</span><span>${x}</span></li>`).join("");
+}
+$("#setupBack").onclick = () => { setupStep--; renderSetup(); };
+$("#setupSkip").onclick = () => { setupStep++; renderSetup(); };
+$("#setupNext").onclick = async () => {
+  const id = SETUP[setupStep];
+  if (id === "cardStorage") {
+    if (!(await saveStorage())) return;
+    if (!cfg.archive_ok) return cardMsg("cardStorage", "Choose the folder your recordings are saved in.", false);
+  }
+  if (id === "cardWordpress" && ($("#cfgWpUrl").value || $("#cfgWpUser").value || $("#cfgWpPass").value)) {
+    if (!(await runTest("cardWordpress", "/api/config/test/wordpress", saveWordpress))
+        && !confirm("The WordPress login didn't work. Continue anyway and fix it later in Settings?")) return;
+  }
+  if (id === "cardDiscord" && ($("#cfgDcToken").value || $("#cfgDcUser").value)) {
+    if (!(await runTest("cardDiscord", "/api/config/test/discord", saveDiscord))
+        && !confirm("The Discord bot isn't working yet. Continue anyway and fix it later in Settings?")) return;
+  }
+  if (id === "cardDone") {
+    await api("/api/setup/complete", { method: "POST" });
+    location.hash = ""; location.reload();
+    return;
+  }
+  setupStep++;
+  if (SETUP[setupStep] === "cardDone") cfg = await api("/api/config");
+  renderSetup();
+};
+$("#rerunSetup").onclick = () => enterSetup();
 
 // ======================================================================== boot
 (async () => {
@@ -586,6 +730,7 @@ $("#scanNow").onclick = async () => {
   setupDrop($("#dropAudio"), "audio");
   setupDrop($("#dropImage"), "image");
   loadRecent();
+  if (!status.setup_complete) { enterSetup(); return; }
   const m = location.hash.match(/^#([0-9a-f]{12})(?:\/(\d))?/);
   if (m) openJob(m[1], m[2] ? +m[2] : undefined).catch(() => go(1));
   else go(1);

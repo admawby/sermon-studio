@@ -61,18 +61,18 @@ def recommend(d: date):
     return {"folder": f"{root_virtual}/{d.year}/{month}/{day}", "exists": False}
 
 
-def copy_into(src: Path, folder: Path, ours=()):
+def copy_into(src: Path, folder: Path, ours=(), name: str | None = None):
     """Copy a file into the archive folder. Never overwrites a file this app didn't write itself
     (e.g. a hand-made MP3 already in the folder); picks "name (2).mp3" instead."""
     folder.mkdir(parents=True, exist_ok=True)
-    dest = folder / src.name
+    dest = folder / (name or src.name)
     if dest.exists() and src.resolve() == dest.resolve():
         return dest
     n = 2
     while dest.exists() and dest.name not in ours:
         if dest.stat().st_size == src.stat().st_size:
             return dest  # already archived
-        dest = folder / f"{src.stem} ({n}){src.suffix}"
+        dest = folder / f"{Path(name or src.name).stem} ({n}){Path(name or src.name).suffix}"
         n += 1
     tmp = folder / f".{dest.name}.part"
     shutil.copyfile(src, tmp)

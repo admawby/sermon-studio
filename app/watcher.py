@@ -109,14 +109,15 @@ def scan_now():
     _wake.set()
 
 
-def start(root: Path, on_new):
+def start(root_fn, on_new):
+    """root_fn() returns the folder to watch (it can change in Settings)."""
     def loop():
         pending = {}
         while True:
             if enabled():
                 try:
                     found = []
-                    scan(root, pending, lambda p: (found.append(p), on_new(p)))
+                    scan(root_fn(), pending, lambda p: (found.append(p), on_new(p)))
                     status.update(last_scan=time.time(), last_error=None, pending=len(pending))
                     if found:
                         status["last_found"] = {"path": str(found[-1]), "at": time.time()}

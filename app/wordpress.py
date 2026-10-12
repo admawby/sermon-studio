@@ -28,6 +28,10 @@ class WPError(Exception):
     pass
 
 
+class DraftGone(WPError):
+    """The draft we created earlier was deleted or trashed in WP Admin."""
+
+
 class FormParser(HTMLParser):
     """Collects the successful controls of <form name="post"> as a list of (name, value)."""
 
@@ -106,10 +110,17 @@ def categories(page):
 
 class WordPress:
     def __init__(self):
-        self.base = config.WP_URL
         self.s = None
         self.logged_in_at = 0
         self.lock = threading.Lock()
+
+    @property
+    def base(self):
+        return config.WP_URL
+
+    def reset(self):
+        """Forget the session (after the login settings change)."""
+        self.s, self.logged_in_at = None, 0
 
     @property
     def configured(self):
@@ -180,6 +191,15 @@ class WordPress:
         return {"fields": sorted({k for k, _ in form_fields(page)}), "acf": acf,
                 "categories": categories(page), **self.meta()}
 
+    def post_state(self, post_id):
+        """(status, permalink) of an existing post, or (None, None) if it's gone/trashed."""
+        page = self.admin("GET", f"post.php?post={post_id}&action=edit").text
+        st = re.search(r"name='?\"?original_post_status'?\"? value='?\"?(\w+)", page)
+        if 'name="post_title"' not in page or not st or st.group(1) == "trash":
+            return None, None
+        link = re.search(r'id="sample-permalink"[^>]*>\s*<a href="([^"]+)"', page)
+        return st.group(1), html.unescape(link.group(1)) if link else None
+
     # --- writing -------------------------------------------------------------
     def upload_media(self, path: Path, mime: str, post_id: int, nonce: str):
         with path.open("rb") as f:
@@ -195,29 +215,39 @@ class WordPress:
             raise WPError(f"Uploading {path.name} failed: {res.get('data', {}).get('message', res)}")
         return res["data"]
 
-    def publish(self, mp3: Path, cover: Path | None, fields: dict, status: str, progress):
-        progress("Opening a new sermon post…")
+    def publish(self, mp3: Path, cover: Path | None, fields: dict, status: str, progress,
+                post_id: int | None = None, reuse_media: bool = False):
+        """Create a sermon post, or update an existing draft (post_id). reuse_media keeps the draft's
+        MP3 and cover instead of uploading them again."""
+        progress("Opening the draft…" if post_id else "Opening a new sermon post…")
         latest = self.latest_post_id()
         feed_image = None
         if latest:
             prev = self.admin("GET", f"post.php?post={latest}&action=edit").text
             m = re.search(rf'name="acf\[{acf_key(prev, "podcast_feed_image")}\]"[^>]*value="(\d+)"', prev)
             feed_image = m.group(1) if m else None
-        page = self.admin("GET", f"post-new.php?post_type={config.WP_POST_TYPE}").text
+        if post_id:
+            page = self.admin("GET", f"post.php?post={post_id}&action=edit").text
+            st = re.search(r"name='?\"?original_post_status'?\"? value='?\"?(\w+)", page)
+            if 'name="post_title"' not in page or not st or st.group(1) == "trash":
+                raise DraftGone(f"Draft {post_id} isn't in WordPress any more.")
+        else:
+            page = self.admin("GET", f"post-new.php?post_type={config.WP_POST_TYPE}").text
         form = form_fields(page)
         post_id = int(dict(form)["post_ID"])
         nonce = re.search(r'"action":"upload-attachment","_wpnonce":"([0-9a-f]+)"', page)
-        if not nonce:
-            raise WPError("Couldn't find the media upload token on the new-post page.")
+        if not nonce and not reuse_media:
+            raise WPError("Couldn't find the media upload token on the post page.")
 
-        progress("Uploading MP3…")
-        audio = self.upload_media(mp3, "audio/mpeg", post_id, nonce.group(1))
-        image = None
-        if cover and cover.exists():
-            progress("Uploading cover image…")
-            image = self.upload_media(cover, "image/jpeg", post_id, nonce.group(1))
+        audio = image = None
+        if not reuse_media:
+            progress("Uploading MP3…")
+            audio = self.upload_media(mp3, "audio/mpeg", post_id, nonce.group(1))
+            if cover and cover.exists():
+                progress("Uploading cover image…")
+                image = self.upload_media(cover, "image/jpeg", post_id, nonce.group(1))
 
-        progress("Saving the sermon post…")
+        progress("Publishing…" if status == "publish" else "Saving the draft…")
         y, mo, d = fields["date"].split("-")
         scripture = fields.get("scripture", "")
         cats = [str(c[0]) for c in categories(page) if c[1].lower() == config.WP_ALWAYS_CATEGORY.lower()]
@@ -225,11 +255,12 @@ class WordPress:
             cats.append(str(fields["series"]))
         override = {
             "post_title": fields["title"], "content": fields.get("description") or scripture, "excerpt": scripture,
-            f"acf[{acf_key(page, 'podcast_audio')}]": str(audio["id"]),
             "tax_input[people]": fields.get("speaker", ""),
             "aa": y, "mm": mo, "jj": d, "hh": "10", "mn": "00", "ss": "00", "edit_date": "1",
             "post_status": "draft", "hidden_post_status": "draft",
         }
+        if audio:
+            override[f"acf[{acf_key(page, 'podcast_audio')}]"] = str(audio["id"])
         if feed_image:
             override[f"acf[{acf_key(page, 'podcast_feed_image')}]"] = feed_image
         if image:
@@ -248,7 +279,7 @@ class WordPress:
         return {"id": post_id, "status": st.group(1) if st else status,
                 "link": html.unescape(link.group(1)) if link else None,
                 "edit": f"{self.base}/wp-admin/post.php?post={post_id}&action=edit",
-                "audio_url": audio.get("url")}
+                "audio_url": audio.get("url") if audio else None}
 
 
 wp = WordPress()

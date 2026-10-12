@@ -23,6 +23,8 @@ log = logging.getLogger("sermon.discord")
 _client = None
 _loop = None
 _ready = threading.Event()
+_thread = None
+error = None  # why the bot couldn't connect, for the Settings page
 actions = {}
 
 
@@ -30,11 +32,65 @@ def enabled():
     return bool(config.DISCORD_TOKEN and config.DISCORD_USER_ID)
 
 
-def start(acts):
+def start(acts=None):
+    global _thread, error
+    if acts:
+        actions.update(acts)
     if not enabled():
         return
-    actions.update(acts)
-    threading.Thread(target=lambda: asyncio.run(_main()), daemon=True, name="discord").start()
+    error = None
+    _thread = threading.Thread(target=_run, daemon=True, name="discord")
+    _thread.start()
+
+
+def _run():
+    global error
+    try:
+        asyncio.run(_main())
+    except Exception as e:
+        import discord
+        if isinstance(e, discord.LoginFailure):
+            error = "Discord rejected the bot token. Copy a fresh one from the Bot tab (Reset Token)."
+        elif isinstance(e, discord.PrivilegedIntentsRequired):
+            error = "Turn on “Message Content Intent” in the Developer Portal (Bot tab), then save again."
+        else:
+            error = f"{type(e).__name__}: {e}"
+        log.warning("discord: %s", error)
+    finally:
+        _ready.clear()
+
+
+def restart():
+    """Reconnect with the current settings (after the token changes in the UI)."""
+    global _client
+    if _client and _loop and not _client.is_closed():
+        try:
+            asyncio.run_coroutine_threadsafe(_client.close(), _loop).result(timeout=15)
+        except Exception:
+            pass
+    if _thread:
+        _thread.join(timeout=15)
+    _ready.clear()
+    _client = None
+    start()
+
+
+def send_test():
+    """Post a hello message. Returns (ok, message)."""
+    if not enabled():
+        return False, "Fill in the bot token and your user ID first."
+    if not _ready.wait(timeout=25):
+        return False, error or "The bot hasn't connected yet. Check the token."
+
+    async def go():
+        ch = await _channel()
+        await ch.send("👋 **Sermon Studio is connected.** I'll post here when a new recording has been analyzed.")
+        return getattr(ch, "name", None) or "your DMs"
+    try:
+        where = asyncio.run_coroutine_threadsafe(go(), _loop).result(timeout=30)
+        return True, f"Sent a test message to #{where}." if where != "your DMs" else "Sent you a test DM."
+    except Exception as e:
+        return False, f"Connected, but couldn't post: {e}. Is the bot in that server, with permission to post in the channel?"
 
 
 def connected():
@@ -137,7 +193,9 @@ async def _main():
 
     @_client.event
     async def on_ready():
+        global error
         log.info("discord: logged in as %s", _client.user)
+        error = None
         _ready.set()
 
     @_client.event

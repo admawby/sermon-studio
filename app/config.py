@@ -45,5 +45,38 @@ DISCORD_USER_ID = int(env("DISCORD_USER_ID", "0") or 0)
 DISCORD_CHANNEL_ID = int(env("DISCORD_CHANNEL_ID", "0") or 0)
 PUBLIC_URL = env("PUBLIC_URL").rstrip("/")
 
+# --- settings the web UI can change (Settings tab / first-run setup) ---------------------------
+# Stored in data/settings.json under "config"; they override the values from .env above.
+EDITABLE = {
+    "ARCHIVE_ROOT": str, "START_PATH": str, "FILE_PREFIX": str,
+    "WP_URL": str, "WP_USER": str, "WP_PASSWORD": str,
+    "DISCORD_TOKEN": str, "DISCORD_USER_ID": int, "DISCORD_CHANNEL_ID": int, "PUBLIC_URL": str,
+}
+SECRET = {"WP_PASSWORD", "DISCORD_TOKEN"}
+_ENV = {k: globals()[k] for k in EDITABLE}
+
+
+def overrides():
+    import json
+    p = DATA / "settings.json"
+    return json.loads(p.read_text()).get("config", {}) if p.exists() else {}
+
+
+def apply():
+    """(Re)load the editable settings: UI overrides first, then .env."""
+    over = overrides()
+    for key, typ in EDITABLE.items():
+        v = over.get(key, _ENV[key])
+        if typ is int:
+            v = int(v or 0)
+        else:
+            v = str(v or "").strip()
+            if key in ("WP_URL", "PUBLIC_URL"):
+                v = v.rstrip("/")
+        globals()[key] = v
+
+
+apply()
+
 AUDIO_EXT = {".wav", ".mp3", ".m4a", ".flac", ".aif", ".aiff", ".ogg", ".mp4", ".mov"}
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp"}

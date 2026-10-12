@@ -111,6 +111,9 @@ footer.nav .actions { margin: 0; }
 /* step 2 */
 .folderRow { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
 .folderRow code { background: #f3f5f8; padding: .35rem .6rem; border-radius: 6px; font-size: .9rem; word-break: break-all; }
+label.notify { display: flex; align-items: center; gap: .5rem; margin: .8rem 0 .2rem; font-weight: 500; cursor: pointer; }
+label.notify input { width: auto; }
+label.notify:has(input:disabled) { cursor: default; color: var(--muted); }
 #checklist { list-style: none; padding: 0; margin: 0 0 .8rem; }
 #checklist li { display: flex; align-items: center; gap: .6rem; padding: .35rem 0; color: var(--muted); }
 #checklist li.active { color: #1f2328; font-weight: 600; }
@@ -172,3 +175,23 @@ details > summary { cursor: pointer; }
   .post { flex-direction: column; }
   #stepper .label { font-size: .78rem; }
 }
+
+/* settings + setup */
+.field { display: flex; flex-direction: column; gap: .3rem; margin: 1rem 0 .3rem; font-weight: 500; }
+.field .hint { font-weight: 400; }
+.folderRow input { flex: 1; }
+details.howto { margin: .6rem 0 1rem; background: #f7f9fb; border: 1px solid var(--line); border-radius: 8px; padding: .5rem .9rem; }
+details.howto ol { margin: .5rem 0; padding-left: 1.3rem; }
+details.howto li { margin: .25rem 0; }
+.cardActions .msg { flex-basis: 100%; }
+.cardActions .msg.ok { color: var(--ok); } .cardActions .msg.bad { color: var(--bad); }
+#settingsView.setup .settingsOnly, #settingsView:not(.setup) .setupOnly { display: none; }
+#settingsView.setup .cfg { display: none; }
+#settingsView.setup .cfg.current { display: block; }
+#settingsView.setup .cardActions button { display: none; }
+#settingsView.setup .cardActions #testWordpress, #settingsView.setup .cardActions #testDiscord { display: inline-block; }
+#setupDots { list-style: none; display: flex; gap: .4rem; padding: 0; margin: .2rem 0 0; flex-wrap: wrap; }
+#setupDots li { font-size: .82rem; padding: .2rem .65rem; border-radius: 99px; background: #e8edf3; color: var(--muted); }
+#setupDots li.current { background: var(--accent); color: #fff; }
+#setupDots li.done { background: #e3f5ea; color: var(--ok); }
+body.setupMode header #tabs, body.setupMode header #newSermon { display: none; }

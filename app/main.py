@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import shutil
 import threading
 import time
@@ -15,7 +16,7 @@ from pydantic import BaseModel
 
 from . import archive, audio, config, discord_bot, jobs, transcribe, watcher
 from . import settings as store
-from .wordpress import WPError, wp
+from .wordpress import DraftGone, WPError, wp
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logging.getLogger("discord").setLevel(logging.WARNING)
@@ -72,7 +73,9 @@ def must_job(jid):
 # --- browsing -----------------------------------------------------------------
 @app.get("/api/status")
 def status():
-    return {"roots": list(config.ROOTS), "start_path": config.START_PATH, "ai": transcribe.model_info(),
+    return {"roots": list(config.ROOTS), "start_path": config.START_PATH or config.ARCHIVE_ROOT,
+            "ai": transcribe.model_info(), "setup_complete": setup_complete(),
+            "discord": discord_bot.enabled(),
             "llm": config.LLM_MODEL or None, "wp_configured": wp.configured, "bitrate": config.MP3_BITRATE,
             "default_status": config.WP_DEFAULT_STATUS, "archive_root": config.ARCHIVE_ROOT,
             "settings": settings()}
@@ -167,6 +170,19 @@ def get_transcript(jid: str):
     return jobs.transcript(jid)
 
 
+class Notify(BaseModel):
+    on: bool
+
+
+@app.post("/api/jobs/{jid}/notify")
+def set_notify(jid: str, body: Notify):
+    job = must_job(jid)
+    if body.on and not discord_bot.enabled():
+        raise HTTPException(400, "Set up the Discord bot in Settings first")
+    jobs.update(job, notify=body.on)
+    return {"ok": True}
+
+
 @app.post("/api/jobs/{jid}/cancel")
 def cancel(jid: str):
     jobs.cancel(must_job(jid))
@@ -207,7 +223,11 @@ def _archive_files(job):
         watcher.mark_seen(wav)  # our own copy isn't a "new recording"
         saved = [wav.name]
         if job.get("output"):
-            saved.append(archive.copy_into(Path(job["output"]["path"]), folder, ours).name)
+            mp3 = Path(job["output"]["path"])
+            saved.append(archive.copy_into(mp3, folder, ours).name)
+            cover = jobs.workdir(job["id"]) / "cover.jpg"
+            if cover.exists():  # the sermon slide, named like the MP3 (e.g. Sermon_20261018.jpg)
+                saved.append(archive.copy_into(cover, folder, ours, name=f"{mp3.stem}.jpg").name)
         # only files the app created count as "ours" (never the original recording itself)
         made = {n for n in saved if not (folder / n).resolve() == Path(job["source"]).resolve()}
         jobs.update(job, archive={**job["archive"], "status": "saved", "written": sorted(ours | made),
@@ -365,13 +385,44 @@ def publish(jid: str, body: Publish):
     return {"ok": True}
 
 
+def _media_sig(job):
+    """Changes whenever the MP3 or the cover is re-made, so we know if a draft's media is stale."""
+    out, cover = Path(job["output"]["path"]), jobs.workdir(job["id"]) / "cover.jpg"
+    return f"{out.stat().st_size}:{int(out.stat().st_mtime)}:{int(cover.stat().st_mtime) if cover.exists() else 0}"
+
+
 def do_publish(job, status):
-    """Upload the encoded MP3 + cover and create the post. Returns the result dict or None."""
+    """Create the post, or, if this sermon already has a draft, update/publish that same draft
+    (re-uploading the MP3/cover only if they changed since). Returns the result dict or None."""
     cover = jobs.workdir(job["id"]) / "cover.jpg"
-    jobs.update(job, publishing=True, message="Uploading to WordPress…")
+    prev = job.get("published") or {}
+    if prev.get("status") == "publish":
+        return prev
+    draft = prev.get("id") if prev.get("status") == "draft" else None
+    if draft:  # someone may have published (or deleted) it in WP Admin since
+        try:
+            state, link = wp.post_state(draft)
+        except Exception:
+            state, link = "draft", None
+        if state == "publish":
+            prev.update(status="publish", link=link or prev.get("link"))
+            jobs.update(job, published=prev, message="Already published in WordPress")
+            return prev
+        if state is None:
+            draft = None
+    sig = _media_sig(job)
+    jobs.update(job, publishing=True, message="Publishing the draft…" if draft and status == "publish"
+                else "Updating the draft…" if draft else "Uploading to WordPress…")
+    progress = lambda m: jobs.update(job, message=m)
     try:
-        res = wp.publish(Path(job["output"]["path"]), cover if cover.exists() else None, job["cut"],
-                         status, lambda m: jobs.update(job, message=m))
+        try:
+            res = wp.publish(Path(job["output"]["path"]), cover if cover.exists() else None, job["cut"], status,
+                             progress, post_id=draft, reuse_media=bool(draft) and prev.get("media_sig") == sig)
+        except DraftGone:  # deleted in WP Admin: make a new post instead
+            res = wp.publish(Path(job["output"]["path"]), cover if cover.exists() else None, job["cut"], status,
+                             progress)
+        res["media_sig"] = sig
+        res["audio_url"] = res.get("audio_url") or prev.get("audio_url")
         _meta_cache["at"] = 0  # the new post is now the "last edited" one
         jobs.update(job, publishing=False, published=res,
                     message="Published" if res["status"] == "publish" else "Saved as draft")
@@ -411,7 +462,7 @@ def _on_new_recording(path: Path):
 
 
 def _on_job_event(job, event):
-    if not job.get("auto") or not discord_bot.enabled():
+    if not (job.get("auto") or job.get("notify")) or not discord_bot.enabled():
         return
     if event == "error":
         discord_bot.notify_error(job)
@@ -428,15 +479,17 @@ def _approve(jid, status):
     job = jobs.get(jid)
     if not job:
         return "That sermon isn't in Sermon Studio any more.", True
-    if job.get("published"):
-        p = job["published"]
-        return f"Already posted ({p['status']}): {p.get('link') or p['edit']}", True
+    p = job.get("published") or {}
+    if p.get("status") == "publish":
+        return f"Already published: {p.get('link') or p['edit']}", True
     if job["status"] != "ready":
         return "It's still being analyzed. Try again when it's done.", False
     if not job.get("cover"):
         return "📎 Send this week's sermon slide first (reply to the message with the image).", False
     jobs.update(job, cut=job.get("cut") or _auto_cut(job))
-    if not do_encode(job):
+    out, cover = job.get("output"), jobs.workdir(jid) / "cover.jpg"
+    stale = not out or not Path(out["path"]).exists() or cover.stat().st_mtime > Path(out["path"]).stat().st_mtime
+    if stale and not do_encode(job):  # (re)make the MP3 unless the current one already has this slide
         return f"⚠️ {job['message']}", False
     res = do_publish(job, status)
     if not res:
@@ -467,7 +520,7 @@ discord_bot.start({
     "latest_job": _latest_auto_job, "job_for_message": _job_for_message, "job": jobs.get,
     "set_cover": _save_cover, "approve": _approve, "update": jobs.update,
 })
-watcher.start(resolve(config.ARCHIVE_ROOT), _on_new_recording)  # idles while monitoring is off
+watcher.start(lambda: resolve(config.ARCHIVE_ROOT), _on_new_recording)  # idles while monitoring is off
 
 
 # --- Settings page --------------------------------------------------------------------
@@ -504,6 +557,119 @@ def watch_scan_now():
     if not watcher.enabled():
         raise HTTPException(400, "Monitoring is off")
     watcher.scan_now()
+    return {"ok": True}
+
+
+# --- configuration from the UI (Settings tab + first-run setup) ------------------------
+def setup_complete():
+    done = store.get("setup_complete")
+    if done is None:  # installs configured through .env before the setup wizard existed
+        done = bool(config.WP_USER or config.DISCORD_TOKEN)
+        if done:
+            store.set(setup_complete=True)
+    return bool(done)
+
+
+def _root_info():
+    out = []
+    for name, path in config.ROOTS.items():
+        exists = path.is_dir()
+        out.append({"name": name, "path": str(path), "exists": exists,
+                    "writable": exists and os.access(path, os.W_OK),
+                    "items": len([c for c in path.iterdir() if not c.name.startswith(".")]) if exists else 0})
+    return out
+
+
+@app.get("/api/config")
+def get_config():
+    values = {}
+    for k in config.EDITABLE:
+        v = getattr(config, k)
+        values[k] = {"set": bool(v)} if k in config.SECRET else v
+    archive_ok = True
+    try:
+        resolve(config.ARCHIVE_ROOT)
+    except HTTPException:
+        archive_ok = False
+    return {"values": values, "roots": _root_info(), "archive_ok": archive_ok,
+            "discord": {"configured": discord_bot.enabled(), "connected": discord_bot.connected(),
+                        "name": discord_bot.name(), "error": discord_bot.error},
+            "wordpress": {"configured": wp.configured}, "setup_complete": setup_complete()}
+
+
+class ConfigUpdate(BaseModel):
+    values: dict
+
+
+@app.post("/api/config")
+def set_config(body: ConfigUpdate):
+    new, errors = {}, []
+    for k, v in body.values.items():
+        if k not in config.EDITABLE:
+            errors.append(f"{k} can't be changed here")
+            continue
+        v = "" if v is None else str(v).strip()
+        if k in config.SECRET and not v:
+            continue  # blank = keep the saved secret
+        if k in ("DISCORD_USER_ID", "DISCORD_CHANNEL_ID") and v and not v.isdigit():
+            errors.append(f"{k.replace('_', ' ').title()} should be a long number (right-click → Copy ID)")
+            continue
+        if k in ("WP_URL", "PUBLIC_URL") and v and not re.match(r"^https?://[^\s/]+", v):
+            errors.append(f"{'WordPress address' if k == 'WP_URL' else 'App address'} should start with https:// or http://")
+            continue
+        if k in ("ARCHIVE_ROOT", "START_PATH") and v:
+            try:
+                if not resolve(v).is_dir():
+                    raise HTTPException(400)
+            except HTTPException:
+                errors.append(f"Folder {v} doesn't exist")
+                continue
+        new[k] = v
+    if errors:
+        raise HTTPException(400, "; ".join(errors))
+    changed = {k for k, v in new.items() if str(getattr(config, k) or "") != v}
+    # never send the saved password to a different site
+    if "WP_URL" in changed and "WP_PASSWORD" not in new:
+        new["WP_PASSWORD"] = ""
+    store.set_config(new)
+    if changed & {"WP_URL", "WP_USER", "WP_PASSWORD"}:
+        wp.reset()
+        _meta_cache["at"] = 0
+    if "ARCHIVE_ROOT" in changed:
+        try:
+            watcher.rebaseline(resolve(config.ARCHIVE_ROOT))  # recordings already there aren't "new"
+        except HTTPException:
+            pass
+    if changed & {"DISCORD_TOKEN", "DISCORD_USER_ID"}:
+        threading.Thread(target=discord_bot.restart, daemon=True).start()
+    return get_config()
+
+
+@app.post("/api/config/test/wordpress")
+def test_wordpress():
+    if not wp.configured:
+        raise HTTPException(400, "Fill in the WordPress address, username and password first")
+    wp.reset()
+    _meta_cache["at"] = 0
+    try:
+        m = wp.meta()
+    except Exception as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, "message": f"Logged in. Found {len(m['series'])} series and {len(m['speakers'])} speakers"
+                                   + (f"; last sermon: “{m['last_post']}”." if m.get("last_post") else ".")}
+
+
+@app.post("/api/config/test/discord")
+def test_discord():
+    ok, msg = discord_bot.send_test()
+    if not ok:
+        raise HTTPException(400, msg)
+    return {"ok": True, "message": msg}
+
+
+@app.post("/api/setup/complete")
+def finish_setup():
+    store.set(setup_complete=True)
     return {"ok": True}
 
 
