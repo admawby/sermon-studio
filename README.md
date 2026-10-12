@@ -162,7 +162,9 @@ The step bar at the top shows where you are. Click any finished step to go back 
 
 ## Automation: new recordings → Discord
 
-With `WATCH_ENABLED=true`, the app scans `ARCHIVE_ROOT` every `WATCH_INTERVAL` seconds for new `.wav` files.
+Monitoring can be switched on and off in the web app's **⚙ Settings** tab; that choice is remembered and overrides `WATCH_ENABLED` (which only sets the default). When you switch it back on, the app asks whether to also analyze recordings that arrived while it was off, or to skip them. The tab also shows when the NAS was last checked, has a **Check now** button, and shows whether Discord, WordPress and the AI are connected.
+
+While monitoring is on, the app scans `ARCHIVE_ROOT` every `WATCH_INTERVAL` seconds for new `.wav` files.
 
 - On the first scan it records everything already there and processes none of it, so only recordings that appear afterwards are picked up.
 - A file counts as new once its size has stopped changing between two scans and it's at least 2 minutes old, so a recording that's still copying isn't analyzed half-finished.
@@ -214,6 +216,8 @@ The log (`docker logs sermon-studio`) shows `discord: logged in as Sermon Studio
 | POST | `/api/jobs/{id}/encode` `{start,end,title,speaker,series,series_name,scripture,description,date,bitrate,normalize}` | make the MP3 |
 | POST | `/api/jobs/{id}/publish` `{status: draft\|publish}` | upload to WordPress |
 | GET | `/api/wp/meta`, `/api/wp/discover` | series list and default; field discovery |
+| GET | `/api/settings` | monitoring status + Discord/WordPress/AI connection status |
+| POST | `/api/settings/watch` `{enabled, catch_up}` · `/api/settings/watch/scan` | turn monitoring on/off · check the NAS now |
 
 ## Project layout
 
@@ -227,6 +231,7 @@ app/
   detect.py       sermon boundary detection (LLM + heuristic), title/scripture suggestion
   wordpress.py    wp-admin client: series/speaker sync, media upload, podcast form
   watcher.py      polls the archive for new recordings
+  settings.py     settings changed from the UI (data/settings.json)
   discord_bot.py  Discord notifications, approval buttons, slide upload
   static/         four-step wizard UI (no build step, no external JS)
 docker-compose.yml       app + ollama
