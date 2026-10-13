@@ -47,6 +47,24 @@
     <p class="hint">You can change all of this later under ⚙ Settings.</p>
   </section>
 
+  <section class="card cfg" id="cardMonitor" data-title="Monitoring">
+    <div class="row">
+      <div>
+        <h3>Watch for new recordings</h3>
+        <p class="hint" id="watchWhat"></p>
+      </div>
+      <label class="switch"><input type="checkbox" id="watchToggle"><span></span></label>
+    </div>
+    <p id="watchStatus"></p>
+    <div id="watchActive" class="activity" hidden></div>
+    <div class="actions">
+      <button id="scanNow" class="secondary small">Check now</button>
+      <span id="scanMsg" class="hint"></span>
+    </div>
+    <p class="hint">When a new recording appears, it's analyzed automatically and the Discord bot asks you to approve it.
+      Changes take effect right away and are remembered after a restart.</p>
+  </section>
+
   <section class="card cfg" id="cardStorage" data-title="Storage">
     <h3>Storage</h3>
     <p class="hint">Folders from this server that Docker has made available to the app (set by <code>NAS_PATH</code> and <code>LOCAL_PATH</code> in <code>.env</code>):</p>
@@ -107,29 +125,15 @@
       <label class="wide">Bot token <input id="cfgDcToken" type="password" autocomplete="new-password"></label>
       <label>Your user ID <input id="cfgDcUser" inputmode="numeric" placeholder="e.g. 123456789012345678"></label>
       <label>Channel ID <small class="hint">(blank = direct messages)</small><input id="cfgDcChannel" inputmode="numeric"></label>
-      <label class="wide">This app's address <small class="hint">(for the “Open in Sermon Studio” button)</small>
-        <span class="folderRow"><input id="cfgPublicUrl" placeholder="http://server:8790"><button class="secondary small" id="useThisUrl">Use this page's address</button></span></label>
+      <label class="wide">This app's address at home <small class="hint">(for the “Open” button in Discord; use an IP or a full name, e.g. http://192.168.1.10:8790)</small>
+        <span class="folderRow"><input id="cfgPublicUrl" placeholder="http://192.168.1.10:8790"><button class="secondary small" id="useThisUrl">Use this page's address</button></span></label>
+      <label class="wide">Address when away <small class="hint">(optional, e.g. your Tailscale name http://server.tailnet.ts.net:8790; adds a second button)</small>
+        <input id="cfgPublicUrl2" placeholder="http://server.your-tailnet.ts.net:8790"></label>
     </div>
     <p id="discordState"></p>
     <div class="actions cardActions"><button id="saveDiscord">Save</button><button class="secondary" id="testDiscord">Send a test message</button><span class="hint msg"></span></div>
   </section>
 
-  <section class="card cfg" id="cardMonitor" data-title="Monitoring">
-    <div class="row">
-      <div>
-        <h3>Watch for new recordings</h3>
-        <p class="hint" id="watchWhat"></p>
-      </div>
-      <label class="switch"><input type="checkbox" id="watchToggle"><span></span></label>
-    </div>
-    <p id="watchStatus"></p>
-    <div class="actions">
-      <button id="scanNow" class="secondary small">Check now</button>
-      <span id="scanMsg" class="hint"></span>
-    </div>
-    <p class="hint">When a new recording appears, it's analyzed automatically and the Discord bot asks you to approve it.
-      Changes take effect right away and are remembered after a restart.</p>
-  </section>
 
   <section class="card cfg settingsOnly" id="cardAbout">
     <h3>About</h3>
@@ -164,6 +168,7 @@
 <main>
   <!-- STEP 1 · UPLOAD ------------------------------------------------------>
   <section class="step" data-step="1">
+    <div id="activeBanner" hidden></div>
     <h2>Upload the recording and the sermon slide</h2>
     <p class="hint">Drop the files here or tap a box to choose them. They're copied into Sermon Studio so the next steps can work on them.</p>
     <div class="drops">

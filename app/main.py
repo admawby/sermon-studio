@@ -162,6 +162,18 @@ def new_job(body: NewJob):
     return job
 
 
+@app.get("/api/active")
+def active_jobs():
+    """What's in progress (for the notices in step 1 and Settings), plus finished automatic
+    sermons still waiting for review."""
+    waiting = []
+    for j in jobs.recent(20):
+        job = jobs.get(j["id"])
+        if job and job.get("auto") and job["status"] == "ready" and not (job.get("published") or {}).get("status") == "publish":
+            waiting.append({k: job.get(k) for k in ("id", "name", "date", "status")})
+    return {"working": jobs.active(), "waiting": waiting}
+
+
 @app.get("/api/jobs")
 def list_jobs():
     return jobs.recent()
@@ -601,6 +613,18 @@ def _on_new_recording(path: Path):
         _detect_archived(job)
     except Exception:
         log.exception("job %s: couldn't work out its NAS folder", job["id"])
+    slide = None
+    try:  # a sermon slide saved next to the recording becomes the cover
+        imgs = [p for p in path.parent.iterdir()
+                if p.is_file() and p.suffix.lower() in config.IMAGE_EXT and not p.name.startswith(".")]
+        if imgs:
+            img = max(imgs, key=lambda p: p.stat().st_mtime)
+            files = {**(job["archive"].get("files") or {}), "slide": False}  # it's already in the folder
+            jobs.update(job, archive={**job["archive"], "files": files}, cover_source=str(img))
+            _save_cover(job, img)
+            slide = img.name
+    except Exception:
+        log.exception("job %s: couldn't use the slide next to the recording", job["id"])
     if discord_bot.enabled():
         try:
             mins = audio.duration(path) / 60
@@ -608,7 +632,7 @@ def _on_new_recording(path: Path):
             mins = 70
         on_gpu = transcribe.model_info()["device"] == "cuda"
         est = round(mins * 0.03 + 2) if on_gpu else round(mins * 0.25 + 12)
-        discord_bot.notify_analyzing(job, virtual_of(path.parent), est)
+        discord_bot.notify_analyzing(job, virtual_of(path.parent), est, slide)
         log.info("job %s: sent the 'analyzing' message", job["id"])
 
 
@@ -655,6 +679,14 @@ def _approve(jid, status):
     return f"📝 **Saved as a draft.** Check it here: {res['edit']}", True
 
 
+def _discord_slide(job, path):
+    """A slide sent on Discord: the cover for the post and MP3, and saved to the NAS folder."""
+    a = job["archive"]
+    if a.get("folder") and a.get("status") != "skipped":
+        jobs.update(job, archive={**a, "files": {**(a.get("files") or {}), "slide": True}})
+    _save_cover(job, path)
+
+
 def _latest_auto_job():
     for j in jobs.recent(30):
         job = jobs.get(j["id"])
@@ -666,7 +698,7 @@ def _latest_auto_job():
 def _job_for_message(mid):
     for j in jobs.recent(30):
         job = jobs.get(j["id"])
-        if (job.get("discord") or {}).get("message") == mid:
+        if mid in ((job.get("discord") or {}).get("message"), (job.get("discord_start") or {}).get("message")):
             return job
     return None
 
@@ -675,7 +707,7 @@ jobs.listeners.append(_on_job_event)
 threading.Thread(target=cleanup_uploads, daemon=True).start()
 discord_bot.start({
     "latest_job": _latest_auto_job, "job_for_message": _job_for_message, "job": jobs.get,
-    "set_cover": _save_cover, "approve": _approve, "update": jobs.update,
+    "set_cover": _discord_slide, "approve": _approve, "update": jobs.update,
 })
 watcher.start(lambda: resolve(config.ARCHIVE_ROOT), _on_new_recording)  # idles while monitoring is off
 
@@ -684,6 +716,7 @@ watcher.start(lambda: resolve(config.ARCHIVE_ROOT), _on_new_recording)  # idles 
 @app.get("/api/settings")
 def get_settings():
     return {
+        "active": jobs.active(),
         "watch": {"enabled": watcher.enabled(), "folder": config.ARCHIVE_ROOT, "interval": config.WATCH_INTERVAL,
                   "types": sorted(config.WATCH_EXT), **watcher.status, **watcher.counts()},
         "discord": {"configured": discord_bot.enabled(), "connected": discord_bot.connected(),
@@ -771,7 +804,7 @@ def set_config(body: ConfigUpdate):
         if k in ("DISCORD_USER_ID", "DISCORD_CHANNEL_ID") and v and not v.isdigit():
             errors.append(f"{k.replace('_', ' ').title()} should be a long number (right-click → Copy ID)")
             continue
-        if k in ("WP_URL", "PUBLIC_URL") and v and not re.match(r"^https?://[^\s/]+", v):
+        if k in ("WP_URL", "PUBLIC_URL", "PUBLIC_URL_REMOTE") and v and not re.match(r"^https?://[^\s/]+", v):
             errors.append(f"{'WordPress address' if k == 'WP_URL' else 'App address'} should start with https:// or http://")
             continue
         if k in ("ARCHIVE_ROOT", "START_PATH") and v:

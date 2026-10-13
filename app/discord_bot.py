@@ -120,16 +120,22 @@ async def _channel():
     return user.dm_channel or await user.create_dm()
 
 
+def _links(job):
+    """[(label, url)] for the app's addresses: at home and (optionally) when away."""
+    urls = [u for u in (config.PUBLIC_URL, config.PUBLIC_URL_REMOTE) if u]
+    labels = ["Open in Sermon Studio"] if len(urls) == 1 else ["Open (at home)", "Open (away)"]
+    return [(lab, f"{u}/#{job['id']}/3") for lab, u in zip(labels, urls)]
+
+
 def _studio_link(job):
-    return f"{config.PUBLIC_URL}/#{job['id']}/3" if config.PUBLIC_URL else None
+    return _links(job)[0][1] if _links(job) else None
 
 
-def _button_ok():
-    """Discord only accepts link buttons with a full address (a dot in the host name, e.g.
-    server.tailnet.ts.net or an IP), not a bare name like http://server:8790."""
+def _button_ok(url):
+    """Discord only accepts link buttons with a full address (a dot in the host name, e.g. an IP or
+    server.tailnet.ts.net), not a bare name like http://server:8790."""
     from urllib.parse import urlsplit
-    host = urlsplit(config.PUBLIC_URL or "").hostname or ""
-    return "." in host
+    return "." in (urlsplit(url).hostname or "")
 
 
 def _view(job, enabled_buttons, link=True):
@@ -139,8 +145,9 @@ def _view(job, enabled_buttons, link=True):
                                  custom_id=f"ss:publish:{job['id']}", disabled=not enabled_buttons))
     v.add_item(discord.ui.Button(label="Save as draft", emoji="📝", style=discord.ButtonStyle.secondary,
                                  custom_id=f"ss:draft:{job['id']}", disabled=not enabled_buttons))
-    if link and _studio_link(job) and _button_ok():
-        v.add_item(discord.ui.Button(label="Open in Sermon Studio", emoji="✏️", url=_studio_link(job)))
+    for label, url in _links(job) if link else []:
+        if _button_ok(url):
+            v.add_item(discord.ui.Button(label=label, emoji="✏️", url=url))
     return v
 
 
@@ -150,11 +157,20 @@ def _fmt(t):
 
 
 # --- notifications (called from worker threads) ----------------------------
-def notify_analyzing(job, folder, minutes):
+def notify_analyzing(job, folder, minutes, slide=None):
+    """slide: name of an image found next to the recording (used as the cover), or None."""
     async def go():
         ch = await _channel()
-        await ch.send(f"🎙️ **New service recording found**\n`{folder}/{job['name']}`\n"
-                      f"Analyzing it now. I'll message you when the sermon is ready (about {minutes} min).")
+        text = (f"🎙️ **New service recording found**\n`{folder}/{job['name']}`\n"
+                f"Analyzing it now. I'll message you when the sermon is ready (about {minutes} min).\n\n")
+        if slide:
+            text += (f"🖼️ I'm using **{slide}** from that folder as this week's sermon slide. "
+                     "If that's not the right one, reply to this message with the correct image.")
+        else:
+            text += ("📎 **Please send this week's sermon slide**: reply to this message with the image. "
+                     "I'll put it on the WordPress post, embed it in the MP3 and save it to the NAS folder.")
+        msg = await ch.send(text)
+        actions["update"](job, discord_start={"channel": ch.id, "message": msg.id})
     _call(go())
 
 
@@ -180,8 +196,9 @@ def notify_ready(job, cut, clips):
                                              f"({_fmt(cut['end'] - cut['start'])})")
         files = [discord.File(clips[0], filename="sermon-start.mp3"), discord.File(clips[1], filename="sermon-end.mp3")]
         has_cover = bool(job.get("cover"))
-        if _studio_link(job) and not _button_ok():
-            embed.add_field(name="Open in Sermon Studio", value=_studio_link(job), inline=False)
+        for label, url in _links(job):
+            if not _button_ok(url):
+                embed.add_field(name=label, value=url, inline=False)
         text = ("✅ **The sermon is ready.** Listen to how it starts and ends (attached).\n"
                 + ("Slide is attached already. Press **Publish** when it looks right."
                    if has_cover else
@@ -196,7 +213,7 @@ def notify_ready(job, cut, clips):
             # send without that button and put the link in the text instead
             log.warning("discord: link button rejected (%s); sending without it", _studio_link(job))
             files = [discord.File(clips[0], filename="sermon-start.mp3"), discord.File(clips[1], filename="sermon-end.mp3")]
-            msg = await ch.send(text + f"\n✏️ Open in Sermon Studio: {_studio_link(job)}", embed=embed, files=files,
+            msg = await ch.send(text + "".join(f"\n✏️ {lab}: {u}" for lab, u in _links(job)), embed=embed, files=files,
                                 view=_view(job, has_cover, link=False))
         actions["update"](job, discord={"channel": ch.id, "message": msg.id})
     _call(go())
@@ -247,8 +264,10 @@ async def _main():
                 return
         title = (job.get("cut") or {}).get("title") or job.get("suggest", {}).get("title") or job["name"]
         ready = job.get("status") == "ready"
-        await msg.reply(f"🖼️ Got the slide for **{title}**."
-                        + (" Publish is unlocked." if ready else " I'll use it when the analysis is done."))
+        saved = (job.get("archive") or {}).get("files", {}).get("slide") and (job.get("archive") or {}).get("folder")
+        await msg.reply(f"🖼️ Got the slide for **{title}**. It'll go on the WordPress post and into the MP3"
+                        + (" and it's being saved to the NAS folder." if saved else ".")
+                        + (" Publish is unlocked." if ready else " I'll send the sermon for approval when the analysis is done."))
         d = job.get("discord")
         if ready and d:
             try:

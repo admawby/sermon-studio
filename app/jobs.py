@@ -157,6 +157,16 @@ def recent(limit=15):
     return out
 
 
+def active():
+    """Jobs being analyzed or waiting to be, oldest first."""
+    out = []
+    for p in sorted(config.WORK.glob("*/state.json"), key=lambda p: p.stat().st_mtime):
+        j = get(p.parent.name)
+        if j and j["status"] not in TERMINAL:
+            out.append({k: j.get(k) for k in ("id", "name", "date", "status", "progress", "message", "auto")})
+    return out
+
+
 def transcript(jid):
     p = config.WORK / jid / "transcript.json"
     return json.loads(p.read_text()) if p.exists() else []

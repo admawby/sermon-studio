@@ -83,6 +83,15 @@ footer.nav .actions { margin: 0; }
 .tag.new { background: #fff4d6; color: #8a6100; }
 .tag.ok { background: #e3f5ea; color: var(--ok); }
 
+/* "already working on…" notices */
+#activeBanner { margin-top: 1rem; display: grid; gap: .5rem; }
+.notice { display: flex; align-items: center; gap: .8rem; padding: .75rem 1rem; border-radius: 10px; background: #eaf1fa; border: 1px solid #c9daf0; }
+.notice.ready { background: #e9f6ee; border-color: #bfe3cc; }
+.notice .txt { flex: 1; }
+.notice progress { width: 140px; height: 8px; }
+.activity { padding: .6rem .8rem; border-radius: 8px; background: #eaf1fa; margin: .2rem 0 .6rem; }
+.activity div + div { margin-top: .3rem; }
+
 /* step 1 */
 .drops { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem; }
 .drop { position: relative; border: 2px dashed #b9c3cf; border-radius: 12px; background: #fff; min-height: 210px; padding: 1.2rem; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: .25rem; cursor: pointer; overflow: hidden; }

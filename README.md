@@ -1,4 +1,10 @@
-# Sermon Studio
+<p align="center">
+  <img src="app/static/icons/icon-512.png" alt="Sermon Studio icon" width="160">
+</p>
+
+<h1 align="center">Sermon Studio</h1>
+
+<p align="center"><i>Turn a Sunday service recording into a published sermon podcast, with a local AI and on your own hardware.</i></p>
 
 A self-hosted web app that turns a full Sunday service recording into a sermon podcast episode. It works as a four-step wizard:
 
@@ -184,6 +190,12 @@ For each new recording, the Discord bot:
 2. **Sends the proposed sermon** once the analysis is done. The message shows the title, series, speaker, date, scripture, description and start → end times, with two 20-second MP3 clips of how the sermon starts and ends. It has three buttons: **✅ Publish**, **📝 Save as draft** and **✏️ Open in Sermon Studio**, which opens the Review step if you want to change anything.
 3. **Asks for this week's sermon slide.** Reply to the message with the image, or just post it in the channel. It becomes the post's cover, and the Publish and draft buttons unlock once it has arrived.
 
+**The slide:** if there's an image in the same folder as the new recording, the bot uses it as that week's slide and says which file it picked, so you can reply with a different one if it's wrong. If there isn't one, the "analyzing" message asks you to reply with the slide straight away. A slide you send goes on the WordPress post, is embedded in the MP3 and is saved to the NAS folder as `<prefix>YYYYMMDD.jpg`.
+
+**Addresses for the Open buttons:** set *This app's address at home* (an IP like `http://192.168.1.10:8790` works best) and, optionally, *Address when away*, e.g. your Tailscale name `http://server.your-tailnet.ts.net:8790`. Each gets its own button. Discord only accepts full addresses (with a dot), so a bare name like `http://server:8790` is shown as text instead.
+
+While something is being analyzed, step 1 of the Sermons tab and the monitoring section in Settings both say what's in progress, so you don't start it again by hand.
+
 Pressing **Publish** or **Save as draft** makes the MP3 (with the proposed cut and details, or your edits if you changed them in the web app), saves it next to the recording on the NAS and posts it. The bot replies with the link. Only the Discord user in `DISCORD_USER_ID` can press the buttons or send slides.
 
 The series and speaker default to those of the last sermon post, the same as in the web app.
@@ -224,7 +236,9 @@ The log (`docker logs sermon-studio`) shows `discord: logged in as Sermon Studio
 | POST | `/api/jobs/{id}/encode` `{start,end,title,speaker,series,series_name,scripture,description,date,bitrate,normalize}` | make the MP3 |
 | POST | `/api/jobs/{id}/publish` `{status: draft\|publish}` | upload to WordPress |
 | GET | `/api/wp/meta`, `/api/wp/discover` | series list and default; field discovery |
-| GET | `/api/settings` | monitoring status + Discord/WordPress/AI connection status |
+| GET | `/api/settings` | monitoring status, what's in progress, Discord/WordPress/AI connection status |
+| GET | `/api/active` | sermons being analyzed, and automatic ones waiting for review |
+| POST | `/api/jobs/{id}/discord` | re-send the "sermon is ready" Discord message |
 | GET / POST | `/api/config` (`{values}`) | storage/WordPress/Discord settings (secrets are never returned) |
 | POST | `/api/config/test/wordpress` · `/api/config/test/discord` | test the login · send a Discord test message |
 | POST | `/api/jobs/{id}/notify` `{on}` | Discord message when this analysis is done |

@@ -36,6 +36,7 @@ function go(n) {
   history.replaceState(null, "", job ? `#${job.id}/${n}` : "#");
   renderStepper();
   window.scrollTo({ top: 0, behavior: "smooth" });
+  if (n === 1) { refreshActive(); }
   if (n === 2) { renderAnalyze(); }
   if (n === 3) { showReview(); }
   if (n === 4) { renderPublish(); }
@@ -153,6 +154,32 @@ $("#toAnalyze").onclick = async () => {
   } catch (e) { alert(e.message); }
   $("#toAnalyze").disabled = false;
 };
+
+// ---- "already working on…" notices on step 1
+function stageText(j) {
+  return j.status === "transcribing" ? `transcribing ${Math.round((j.progress || 0) * 100)}%`
+    : { queued: "waiting to start", preparing: "converting the audio", detecting: "finding the sermon",
+        describing: "writing the title and description" }[j.status] || j.status;
+}
+async function refreshActive() {
+  if (step !== 1 || $("#wizardView").hidden) return;
+  let a;
+  try { a = await api("/api/active"); } catch { return; }
+  const box = $("#activeBanner");
+  box.innerHTML = [
+    ...a.working.map((j) => `<div class="notice"><span>⏳</span><span class="txt">
+      <b>Already working on the service from ${niceDate(j.date)}</b>${j.auto ? " (found on the NAS automatically)" : ""}: ${esc(stageText(j))}.
+      No need to start it yourself.</span>
+      ${j.status === "transcribing" ? `<progress max="1" value="${j.progress || 0}"></progress>` : ""}
+      <button class="secondary small" data-open="${j.id}" data-step="2">View progress</button></div>`),
+    ...a.waiting.map((j) => `<div class="notice ready"><span>✅</span><span class="txt">
+      <b>The sermon from ${niceDate(j.date)} is ready for review.</b> It was found on the NAS and analyzed automatically.</span>
+      <button class="small" data-open="${j.id}" data-step="3">Review it</button></div>`),
+  ].join("");
+  box.hidden = !box.innerHTML;
+  $$("#activeBanner [data-open]").forEach((b) => b.onclick = () => openJob(b.dataset.open, +b.dataset.step));
+}
+setInterval(refreshActive, 8000);
 
 // ---- "Save to the NAS?" dialog (shown when leaving step 1)
 let nasJob = null;
@@ -590,6 +617,11 @@ function renderSettings(s) {
   if (w.last_found) parts.push(`Last new recording: ${esc(w.last_found.path.split("/").pop())} (${ago(w.last_found.at)})`);
   if (w.last_error) parts.push(`<span class=bad>Last check failed: ${esc(w.last_error)}</span>`);
   $("#watchStatus").innerHTML = parts.join(" · ");
+  const act = s.active || [];
+  $("#watchActive").hidden = !act.length;
+  $("#watchActive").innerHTML = act.map((j) => `<div>⏳ <b>Working on ${esc(j.name)}</b> (service from ${niceDate(j.date)})
+    · ${esc(stageText(j))} · <a href="#${j.id}/2" class="openJob" data-id="${j.id}">open</a></div>`).join("");
+  $$("#watchActive .openJob").forEach((a) => a.onclick = (e) => { e.preventDefault(); showTab("wizard"); openJob(a.dataset.id, 2); });
   const ai = s.ai;
   $("#aboutList").innerHTML = [["AI", `${esc(ai.model)} on ${ai.device.toUpperCase()}${ai.llm ? ` + ${esc(ai.llm)}` : " (no LLM)"}`],
     ["Source", `<a href="https://github.com/admawby/sermon-studio" target="_blank" rel="noopener">github.com/admawby/sermon-studio</a>`]]
@@ -615,6 +647,7 @@ function renderConfig(fillForms) {
   $("#cfgDcToken").value = ""; $("#cfgDcToken").placeholder = v.DISCORD_TOKEN.set ? "•••••••• saved (leave blank to keep)" : "Paste the bot token";
   $("#cfgDcUser").value = v.DISCORD_USER_ID || ""; $("#cfgDcChannel").value = v.DISCORD_CHANNEL_ID || "";
   $("#cfgPublicUrl").value = v.PUBLIC_URL || "";
+  $("#cfgPublicUrl2").value = v.PUBLIC_URL_REMOTE || "";
 }
 $("#cfgPrefix").oninput = (e) => $("#prefixEx").textContent = e.target.value || "Sermon_";
 $("#useThisUrl").onclick = () => $("#cfgPublicUrl").value = location.origin;
@@ -635,7 +668,8 @@ async function saveValues(card, values) {
 const saveStorage = () => saveValues("cardStorage", { ARCHIVE_ROOT: $("#cfgArchive").textContent.replace("(not set)", ""), FILE_PREFIX: $("#cfgPrefix").value });
 const saveWordpress = () => saveValues("cardWordpress", { WP_URL: $("#cfgWpUrl").value, WP_USER: $("#cfgWpUser").value, WP_PASSWORD: $("#cfgWpPass").value });
 const saveDiscord = () => saveValues("cardDiscord", { DISCORD_TOKEN: $("#cfgDcToken").value, DISCORD_USER_ID: $("#cfgDcUser").value,
-  DISCORD_CHANNEL_ID: $("#cfgDcChannel").value, PUBLIC_URL: $("#cfgPublicUrl").value });
+  DISCORD_CHANNEL_ID: $("#cfgDcChannel").value, PUBLIC_URL: $("#cfgPublicUrl").value,
+  PUBLIC_URL_REMOTE: $("#cfgPublicUrl2").value });
 $("#saveStorage").onclick = saveStorage;
 $("#saveWordpress").onclick = saveWordpress;
 $("#saveDiscord").onclick = saveDiscord;
