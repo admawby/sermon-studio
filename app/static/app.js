@@ -168,8 +168,8 @@ async function refreshActive() {
   const box = $("#activeBanner");
   box.innerHTML = [
     ...a.working.map((j) => `<div class="notice"><span>⏳</span><span class="txt">
-      <b>Already working on the service from ${niceDate(j.date)}</b>${j.auto ? " (found on the NAS automatically)" : ""}: ${esc(stageText(j))}.
-      No need to start it yourself.</span>
+      <b>${j.batch ? "Batch processing is working on" : "Already working on"} the service from ${niceDate(j.date)}</b>${j.auto ? " (found on the NAS automatically)" : ""}: ${esc(stageText(j))}.
+      ${j.batch ? "See the ⚡ Batch tab." : "No need to start it yourself."}</span>
       ${j.status === "transcribing" ? `<progress max="1" value="${j.progress || 0}"></progress>` : ""}
       <button class="secondary small" data-open="${j.id}" data-step="2">View progress</button></div>`),
     ...a.waiting.map((j) => `<div class="notice ready"><span>✅</span><span class="txt">
@@ -598,10 +598,12 @@ const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<
 
 function showTab(tab) {
   $("#settingsView").hidden = tab !== "settings";
-  $("#wizardView").hidden = tab === "settings";
+  $("#batchView").hidden = tab !== "batch";
+  $("#wizardView").hidden = tab !== "wizard";
   $$("#tabs a").forEach((a) => a.classList.toggle("active", a.dataset.tab === tab));
   clearInterval(settingsPoll); settingsPoll = null;
   if (tab === "settings") { loadSettings(true); settingsPoll = setInterval(() => loadSettings(false), 5000); }
+  if (tab === "batch") batchOpen(); else batchStopPolling();
 }
 $$("#tabs a").forEach((a) => a.onclick = (e) => { e.preventDefault(); showTab(a.dataset.tab); });
 
@@ -782,6 +784,359 @@ $("#setupNext").onclick = async () => {
   renderSetup();
 };
 $("#rerunSetup").onclick = () => enterSetup();
+
+
+// ======================================================================== batch
+const B = { recs: [], sel: new Set(), state: null, step: 1, poll: null, open: new Set(), gpu: false, opts: {}, meta: null, tx: {} };
+const dur = (s) => s ? `${Math.round(s / 60)} min` : "";
+const short = (d) => new Date(d + "T12:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+const FLAG = { no_post: ["warn", "No WordPress post"], unknown_voice: ["warn", "Voice not recognized"], speaker_differs: ["bad", "Speaker differs"],
+  hand_not_found: ["warn", "Couldn't find your MP3 in the recording"], edges_differ: ["warn", "Start/end differs from yours"] };
+const sgn = (x) => (x >= 0 ? "+" : "−") + Math.abs(Math.round(x)) + " s";
+
+async function batchOpen() {
+  B.state = await api("/api/batch");
+  if (!B.meta) B.meta = wpMeta || await api("/api/wp/meta").catch(() => ({ series: [], speakers: [] }));
+  if (!$("#speakers").children.length) for (const p of B.meta.speakers || []) $("#speakers").append(new Option(p));
+  const st = B.state.status;
+  if (st === "idle" || !B.state.items.length) { await batchLoadRecs(false); batchGo(1); }
+  else batchGo(B.state.apply ? 5 : st === "done" ? 4 : 3);
+  batchPolling();
+}
+function batchPolling() {
+  batchStopPolling();
+  B.poll = setInterval(async () => {
+    B.state = await api("/api/batch");
+    if (B.step === 3) renderQueue();
+    if (B.step === 4) renderReview(false);
+    if (B.step === 5) renderApply();
+    renderChips();
+  }, 4000);
+}
+function batchStopPolling() { clearInterval(B.poll); B.poll = null; }
+
+function bReach(n) {
+  const s = B.state || { status: "idle", items: [] }, busy = s.items.length > 0;
+  if (n === 1 || n === 2) return !busy;  // a finished batch is cleared with "Start a new batch"
+  if (n === 3) return busy;
+  if (n === 4) return s.items.some((x) => x.state === "done" || x.state === "error");
+  if (n === 5) return s.items.some((x) => x.approved && x.state === "done");
+}
+function renderChips() {
+  const names = ["Choose recordings", "Options", "Processing", "Review results", "Apply"];
+  $("#bSteps").innerHTML = names.map((t, i) => {
+    const n = i + 1, cur = n === B.step, done = n < B.step || (n <= 2 && (B.state?.items.length || 0) > 0);
+    return `<li data-n="${n}" class="${cur ? "cur" : done ? "done" : ""} ${!cur && bReach(n) ? "reach" : ""}">${done && !cur ? "✓ " : n + ". "}${t}</li>`;
+  }).join("");
+  $$("#bSteps li.reach").forEach((li) => li.onclick = () => batchGo(+li.dataset.n));
+}
+function batchGo(n) {
+  B.step = n;
+  $$("#batchView .bstep").forEach((s) => s.hidden = +s.dataset.b !== n);
+  renderChips();
+  if (n === 1) renderRecs();
+  if (n === 2) renderOptions();
+  if (n === 3) renderQueue();
+  if (n === 4) renderReview(true);
+  if (n === 5) loadPlan();
+  window.scrollTo({ top: 0 });
+}
+$$("[data-bgo]").forEach((b) => b.onclick = () => batchGo(+b.dataset.bgo));
+
+// ---- step 1
+async function batchLoadRecs(refresh) {
+  $("#bSummary").innerHTML = `<div class="hint">${refresh ? "Fetching the post list from WordPress…" : "Looking through the recordings…"}</div>`;
+  try {
+    const r = await api(`/api/batch/recordings${refresh ? "?refresh=true" : ""}`);
+    B.recs = r.recordings; B.gpu = r.gpu; B.opts = r.options; B.wp = r.wp;
+    B.sel = new Set(B.recs.filter((x) => !x.job).map((x) => x.path));
+    if (B.recs.length) {
+      $("#bTo").value = B.recs[0].date.slice(0, 7);
+      $("#bFrom").value = B.recs[B.recs.length - 1].date.slice(0, 7);
+    }
+  } catch (e) { $("#bSummary").innerHTML = `<div class="bad">${esc(e.message)}</div>`; B.recs = []; }
+  renderRecs();
+}
+function shownRecs() {
+  const from = $("#bFrom").value, to = $("#bTo").value, f = $("#bFilter").value, q = $("#bSearch").value.toLowerCase();
+  return B.recs.filter((r) => (!from || r.date.slice(0, 7) >= from) && (!to || r.date.slice(0, 7) <= to)
+    && (f !== "post" || r.post) && (f !== "new" || !r.job) && (f !== "nomp3" || !r.mp3)
+    && (!q || `${r.post?.title || ""} ${r.post?.speaker || ""} ${r.name}`.toLowerCase().includes(q)));
+}
+function renderRecs() {
+  const rows = shownRecs(), tb = $("#bRecs tbody");
+  tb.innerHTML = rows.map((r) => `<tr class="${B.sel.has(r.path) ? "sel" : ""}" data-p="${esc(r.path)}">
+    <td><input type="checkbox" ${B.sel.has(r.path) ? "checked" : ""}></td><td><b>${short(r.date)}</b></td>
+    <td><code>${esc(r.name)}</code><div class="note">${dur(r.duration)}</div></td>
+    <td>${r.mp3 ? `✓ <span class="note">${esc(r.mp3)}</span>` : "—"}</td>
+    <td>${r.post ? `${esc(r.post.title)} <span class="note">· ${esc(r.post.speaker || "no speaker")}</span>` : `<span class="pill warn">no post</span>`}</td>
+    <td>${r.job ? `<span class="pill ok">done before</span>` : `<span class="pill">not processed</span>`}</td></tr>`).join("")
+    || `<tr><td colspan="6" class="note" style="text-align:center">No recordings match.</td></tr>`;
+  $$("#bRecs tbody tr[data-p]").forEach((tr) => tr.onclick = (e) => {
+    const p = tr.dataset.p; B.sel.has(p) ? B.sel.delete(p) : B.sel.add(p);
+    tr.classList.toggle("sel", B.sel.has(p)); $("input", tr).checked = B.sel.has(p); renderRecSummary();
+  });
+  renderRecSummary();
+}
+function renderRecSummary() {
+  const sel = B.recs.filter((r) => B.sel.has(r.path)), n = sel.length;
+  const mins = sel.reduce((a, r) => a + (r.duration || 4000) / 60, 0);
+  const gpuH = (mins * 0.03 + n * 1.5) / 60, cpuH = (mins * 0.25 + n * 1.5) / 60;
+  const fmtH = (h) => h < 1 ? `${Math.max(1, Math.round(h * 60))} min` : `${h.toFixed(h < 10 ? 1 : 0)} h`;
+  $("#bSummary").innerHTML = `<div><b>${n}</b>selected of ${B.recs.length}</div>
+    <div><b>~${fmtH(B.gpu ? gpuH : cpuH)}</b>estimated on the ${B.gpu ? "GPU" : "CPU"}${B.gpu ? "" : `<br><span class="note">(~${fmtH(gpuH)} once the GPU is in)</span>`}</div>
+    <div><b>${(sel.reduce((a, r) => a + r.size, 0) / 1e9).toFixed(0)} GB</b>of recordings to read</div>
+    <div><b>${sel.filter((r) => r.post).length}</b>matched to a WordPress post</div>
+    <div><b>${sel.filter((r) => !r.post).length}</b>without a post</div>`;
+  $("#bToOptions").disabled = !n;
+  B.est = B.gpu ? gpuH : cpuH;
+}
+["#bFrom", "#bTo", "#bFilter"].forEach((s) => $(s).onchange = renderRecs);
+$("#bSearch").oninput = renderRecs;
+$("#bAll").onclick = () => { shownRecs().forEach((r) => B.sel.add(r.path)); renderRecs(); };
+$("#bNone").onclick = () => { B.sel.clear(); renderRecs(); };
+$("#bRefresh").onclick = () => batchLoadRecs(true);
+$("#bToOptions").onclick = () => batchGo(2);
+
+// ---- step 2
+function renderOptions() {
+  const o = B.opts;
+  $$("[data-o]").forEach((i) => i.checked = !!o[i.dataset.o]);
+  ["cut", "existing", "order"].forEach((k) => $$(`[name=o_${k}]`).forEach((r) => r.checked = r.value === o[k]));
+  $$("[data-o^=wp_]").forEach((i) => { i.disabled = !B.wp; });
+  $("#oMp3Hint").textContent = `Named like your other sermon MP3s (prefix + YYYYMMDD.mp3), ${status.bitrate} mono, volume-levelled, with title, speaker, series and cover art.`;
+  $("#bCpuWarn").hidden = B.gpu;
+  const n = B.sel.size;
+  $("#bStartHint").textContent = `${n} recording${n === 1 ? "" : "s"} · about ${B.est < 1 ? Math.round(B.est * 60) + " min" : B.est.toFixed(1) + " h"} on the ${B.gpu ? "GPU" : "CPU"}`;
+}
+function readOptions() {
+  const o = { ...B.opts };
+  $$("[data-o]").forEach((i) => o[i.dataset.o] = i.checked);
+  ["cut", "existing", "order"].forEach((k) => { const r = $(`[name=o_${k}]:checked`); if (r) o[k] = r.value; });
+  return o;
+}
+$("#bStart").onclick = async () => {
+  const recs = B.recs.filter((r) => B.sel.has(r.path));
+  if (!B.gpu && recs.length > 5 && !confirm(`No GPU yet: ${recs.length} recordings will take about ${B.est.toFixed(0)} hours on the CPU. Start anyway?`)) return;
+  const done = recs.filter((r) => r.job).length;
+  if (done && !confirm(`${done} of these were processed before; their results in Sermon Studio will be replaced by the batch's. Continue?`)) return;
+  try {
+    B.opts = readOptions();
+    B.state = await api("/api/batch/start", { method: "POST", body: { recordings: recs, options: B.opts } });
+    batchGo(3);
+  } catch (e) { alert(e.message); }
+};
+
+// ---- step 3
+const STAGE = { queued: "Waiting", preparing: "Converting the audio", transcribing: "Transcribing", detecting: "Finding the sermon",
+  describing: "Writing title & description", ready: "Finishing" };
+function renderQueue() {
+  const s = B.state, items = s.items, done = items.filter((x) => x.state === "done").length, err = items.filter((x) => x.state === "error").length;
+  const cur = s.current != null ? items[s.current] : null;
+  $("#bNow").textContent = s.status === "done" ? "Finished" : s.status === "paused" ? "Paused" : s.status === "stopping" ? "Stopping…"
+    : cur ? `Processing ${s.current + 1} of ${items.length} · ${short(cur.date)}` : "Starting…";
+  $("#bCounts").textContent = `${done} done · ${err} failed · ${items.filter((x) => x.state === "queued").length} waiting`;
+  const frac = (done + err + (cur && cur.job_status === "transcribing" ? (cur.progress || 0) * 0.7 : 0)) / Math.max(1, items.length);
+  $("#bProg").value = frac;
+  const times = items.filter((x) => x.state === "done" && x.started && x.finished).map((x) => x.finished - x.started);
+  if (s.status === "done") $("#bEta").textContent = `Done ${new Date(s.finished * 1000).toLocaleString()}.`;
+  else if (times.length) {
+    const left = (times.reduce((a, b) => a + b, 0) / times.length) * items.filter((x) => ["queued", "running"].includes(x.state)).length;
+    const end = new Date(Date.now() + left * 1000);
+    $("#bEta").textContent = `Started ${new Date(s.started * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} · about ${left > 3600 ? (left / 3600).toFixed(1) + " h" : Math.round(left / 60) + " min"} left · finishes around ${end.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}`;
+  } else $("#bEta").textContent = "Working out how long this will take…";
+  $("#bPause").textContent = s.status === "paused" ? "▶ Resume" : "⏸ Pause";
+  $("#bPause").hidden = $("#bStop").hidden = !["running", "paused"].includes(s.status);
+  $("#bQueue tbody").innerHTML = items.map((x) => {
+    const st = x.state === "done" ? `<span class="pill ok">✓ done</span>` : x.state === "error" ? `<span class="pill bad">failed</span> <span class="note">${esc(x.error || "")}</span>`
+      : x.state === "running" ? `<span class="pill blue">⏳ ${STAGE[x.job_status] || "Starting"}</span>${x.job_status === "transcribing" ? ` <span class="bar"><i style="width:${Math.round((x.progress || 0) * 100)}%"></i></span> ${Math.round((x.progress || 0) * 100)}%` : ""}`
+      : `<span class="pill">${x.state === "skipped" ? "skipped" : "waiting"}</span>`;
+    const res = x.state === "done" && x.cut ? `${fmt(x.cut.start)} → ${fmt(x.cut.end)} · ${esc(x.cut.speaker || "?")}${x.speaker_source === "voice" ? " (voice)" : ""}` : "";
+    return `<tr><td><b>${short(x.date)}</b><div class="note">${esc(x.post?.title || x.name)}</div></td><td>${st}</td><td class="note">${res}</td></tr>`;
+  }).join("");
+}
+$("#bPause").onclick = async () => { B.state = await api("/api/batch/control", { method: "POST", body: { action: B.state.status === "paused" ? "resume" : "pause" } }); renderQueue(); };
+$("#bStop").onclick = async () => {
+  if (!confirm("Stop the batch? Finished results are kept and can still be reviewed and applied.")) return;
+  B.state = await api("/api/batch/control", { method: "POST", body: { action: "stop" } }); renderQueue();
+};
+$("#bToReview").onclick = () => batchGo(4);
+
+// ---- step 4
+const needsLook = (x) => x.state === "error" || (x.flags || []).length > 0;
+function renderReview(full) {
+  const items = B.state.items.filter((x) => x.state === "done" || x.state === "error");
+  const good = items.filter((x) => !needsLook(x)).length, look = items.length - good;
+  const diffs = items.filter((x) => x.diff).flatMap((x) => [Math.abs(x.diff.start), Math.abs(x.diff.end)]).sort((a, b) => a - b);
+  $("#rSummary").innerHTML = `<div><b class="ok">${good}</b>look good</div><div><b style="color:#8a6100">${look}</b>need a look</div>
+    <div><b class="bad">${items.filter((x) => (x.flags || []).includes("speaker_differs")).length}</b>speaker differs from WordPress</div>
+    ${diffs.length ? `<div><b>±${Math.round(diffs[Math.floor(diffs.length / 2)])} s</b>typical difference from your hand cuts</div>` : ""}
+    <div><b>${items.filter((x) => x.approved).length}</b>approved</div>`;
+  $("#rApprovedCount").textContent = `${items.filter((x) => x.approved && x.state === "done").length} approved`;
+  if (!full && document.activeElement && document.activeElement.closest("#rTable .editor")) return;  // don't disturb typing
+  const sort = $("#rSort").value, f = $("#rFilter").value;
+  let rows = items.filter((x) => f === "all" || (f === "look" && needsLook(x)) || (f === "approved" && x.approved) || (f === "unapproved" && !x.approved)
+    || (x.flags || []).includes(f));
+  const maxd = (x) => x.diff ? Math.max(Math.abs(x.diff.start), Math.abs(x.diff.end)) : 0;
+  rows.sort((a, b) => sort === "newest" ? b.date.localeCompare(a.date) : sort === "diff" ? maxd(b) - maxd(a)
+    : (needsLook(b) - needsLook(a)) || b.date.localeCompare(a.date));
+  const tb = $("#rTable tbody");
+  const keepOpen = [...B.open];
+  tb.innerHTML = rows.map((x) => {
+    const c = x.cut || {}, how = x.speaker_source === "voice" ? "🎙 by voice" : x.speaker_source === "transcript" ? "📝 transcript" : "not recognized";
+    const differs = (x.flags || []).includes("speaker_differs");
+    const fl = x.state === "error" ? `<span class="pill bad">failed</span>` : (x.flags || []).length
+      ? x.flags.map((k) => `<span class="pill ${FLAG[k][0]}">${FLAG[k][1]}</span>`).join(" ") : `<span class="pill ok">Looks good</span>`;
+    const yours = x.hand ? `${fmt(x.hand.start)} → ${fmt(x.hand.end)}<div class="note">your MP3</div>` : `—<div class="note">${x.mp3 ? "MP3 not found in recording" : "no MP3"}</div>`;
+    const se = x.diff ? `${sgn(x.diff.start)} / ${sgn(x.diff.end)}<div class="note">AI vs yours</div>` : c.start != null ? `${fmt(c.start)} → ${fmt(c.end)}` : "";
+    return `<tr class="clickable ${B.open.has(x.i) ? "open" : ""}" data-i="${x.i}"><td class="chev">${B.open.has(x.i) ? "▾" : "▸"}</td>
+      <td><input type="checkbox" class="appr" ${x.approved ? "checked" : ""} ${x.state !== "done" ? "disabled" : ""}></td>
+      <td><b>${short(x.date)}</b><div class="note">${esc(x.post?.title || c.title || x.name)}</div></td><td>${yours}</td><td>${se}</td>
+      <td>${differs ? `<b class="bad">${esc(c.speaker || "")}</b>` : esc(c.speaker || "—")}<div class="note">${how}${differs ? ` · WordPress says ${esc(x.post?.speaker || "")}` : ""}</div></td>
+      <td>${fl}</td><td><a class="button secondary small" href="/#${x.job}/3" target="_blank" rel="noopener">Open ↗</a></td></tr>
+      ${B.open.has(x.i) ? `<tr class="editor" data-i="${x.i}"><td colspan="8"><div class="ed">Loading…</div></td></tr>` : ""}`;
+  }).join("") || `<tr><td colspan="8" class="note" style="text-align:center">Nothing here yet.</td></tr>`;
+  $$("#rTable tr.clickable").forEach((tr) => tr.onclick = (e) => {
+    if (e.target.closest("a, input")) return;
+    const i = +tr.dataset.i; B.open.has(i) ? B.open.delete(i) : B.open.add(i); renderReview(true);
+  });
+  $$("#rTable .appr").forEach((cb) => cb.onchange = async () => {
+    const i = +cb.closest("tr").dataset.i;
+    await api("/api/batch/approve", { method: "POST", body: { indices: [i], approved: cb.checked } });
+    B.state.items[i].approved = cb.checked; renderReview(false);
+  });
+  $$("#rTable tr.editor").forEach((tr) => buildEditor(tr, B.state.items[+tr.dataset.i]));
+}
+["#rSort", "#rFilter"].forEach((s) => $(s).onchange = () => renderReview(true));
+$("#rExpand").onclick = () => { B.state.items.filter((x) => x.state === "done" && needsLook(x)).forEach((x) => B.open.add(x.i)); renderReview(true); };
+$("#rApproveGood").onclick = async () => {
+  const idx = B.state.items.filter((x) => x.state === "done" && !needsLook(x)).map((x) => x.i);
+  await api("/api/batch/approve", { method: "POST", body: { indices: idx, approved: true } });
+  B.state = await api("/api/batch"); renderReview(true);
+};
+$("#rToApply").onclick = () => batchGo(5);
+
+async function buildEditor(tr, x) {
+  const box = $(".ed", tr), c = x.cut || {}, total = x.duration || 1;
+  if (!B.tx[x.job]) B.tx[x.job] = await api(`/api/jobs/${x.job}/transcript`).catch(() => []);
+  const segs = B.tx[x.job];
+  const pct = (t) => `${(t / total) * 100}%`;
+  const series = (B.meta.series || []).map((s) => `<option value="${s.id}" ${String(s.id) === String(c.series) ? "selected" : ""}>${esc(s.name)}</option>`).join("");
+  const d = x.speaker_detail || {};
+  const spHint = x.speaker_source === "voice" ? `🎙 voice match ${d.score}` : x.speaker_source === "transcript" ? `📝 ${esc(d.evidence || "from the transcript")}` : "⚠ voice not recognized";
+  box.innerHTML = `<div>
+      <h4>Sermon audio</h4>
+      <div class="mwave"><img src="/api/jobs/${x.job}/waveform.png" alt=""><div class="reg"></div>${x.hand ? `<div class="old" style="left:${pct(x.hand.start)};width:${pct(x.hand.end - x.hand.start)}"></div>` : ""}<div class="ph"></div></div>
+      <div class="note" style="margin-top:.3rem">Shaded: the cut that will be used${x.hand ? " · dashed red: your hand-made MP3" : ""} · click the waveform to listen anywhere</div>
+      <audio controls preload="none" src="/api/jobs/${x.job}/preview.mp3" style="width:100%;margin:.4rem 0 0"></audio>
+      <div class="edges">
+        <div class="edge"><div class="row1"><b>Start</b><input class="time e-start" value="${fmt(c.start)}"><button class="secondary small" data-a="ls">▶ Listen</button><button class="secondary small" data-a="s-5">− 5 s</button><button class="secondary small" data-a="s+5">+ 5 s</button></div><ul class="lines l-start"></ul></div>
+        <div class="edge"><div class="row1"><b>End</b><input class="time e-end" value="${fmt(c.end)}"><button class="secondary small" data-a="le">▶ Last 10 s</button><button class="secondary small" data-a="e-5">− 5 s</button><button class="secondary small" data-a="e+5">+ 5 s</button></div><ul class="lines l-end"></ul></div>
+      </div></div>
+    <div><h4>Details</h4><div class="fields">
+      <label class="wide">Title <input class="f-title" value="${esc(c.title || "")}"><small class="note">${x.post ? "from WordPress (kept)" : "suggested by the AI"}</small></label>
+      <label>Speaker <input class="f-speaker" list="speakers" value="${esc(c.speaker || "")}"><small class="note ${(x.flags || []).includes("speaker_differs") ? "bad" : ""}">${spHint}${x.post?.speaker && x.post.speaker !== c.speaker ? ` · WordPress says ${esc(x.post.speaker)}` : ""}</small></label>
+      <label>Series <select class="f-series"><option value="">(no series)</option>${series}</select></label>
+      <label>Scripture <input class="f-scripture" value="${esc(c.scripture || "")}"></label>
+      <label>Date <input type="date" class="f-date" value="${c.date || x.date}"></label>
+      <label class="wide">Description <textarea rows="3" class="f-description">${esc(c.description || "")}</textarea><small class="note">✨ written by the AI${x.post ? " (only added if the post has none)" : ""}</small></label>
+    </div>
+    <div class="edact"><button data-a="save">✓ Save &amp; approve</button><button class="secondary" data-a="reset">Reset</button><button class="secondary" data-a="redetect">↻ Re-run detection</button>
+      <span class="grow"></span><a class="button secondary small" href="/#${x.job}/3" target="_blank" rel="noopener">Open ↗</a></div></div>`;
+  const au = $("audio", box), sIn = $(".e-start", box), eIn = $(".e-end", box);
+  const lines = (ul, lo, hi, cur, which) => {
+    const near = segs.filter((s) => s.start >= lo && s.start <= hi);
+    ul.innerHTML = near.map((s) => `<li data-t="${which === "start" ? s.start : s.end + 1}" data-play="${s.start}" class="${Math.abs((which === "start" ? s.start : s.end) - cur) < 1.5 ? "cur" : ""}">
+      <span class="t">${fmt(s.start).replace(/^0:/, "")}</span><span class="v ${s.voice === "P" ? "" : "o"}">${s.voice === "P" ? "preacher" : "other"}</span>
+      <span>${esc(s.text)}</span><span class="b" data-set="${which}">${which} here</span></li>`).join("") || `<li class="note">no speech nearby</li>`;
+  };
+  const draw = () => {
+    const s = parse(sIn.value), e = parse(eIn.value);
+    $(".reg", box).style.left = pct(s); $(".reg", box).style.width = pct(Math.max(0, e - s));
+    lines($(".l-start", box), s - 45, s + 30, s, "start"); lines($(".l-end", box), e - 45, e + 30, e, "end");
+    $$(".lines", box).forEach((ul) => { const c = $("li.cur", ul); if (c) ul.scrollTop = c.offsetTop - ul.offsetTop - 40; });
+  };
+  draw();
+  [sIn, eIn].forEach((i) => i.onchange = draw);
+  au.ontimeupdate = () => $(".ph", box).style.left = pct(au.currentTime);
+  const play = (t) => { au.currentTime = Math.max(0, t); au.play(); };
+  $(".mwave", box).onclick = (ev) => { const r = ev.currentTarget.getBoundingClientRect(); play((ev.clientX - r.left) / r.width * total); };
+  box.onclick = async (ev) => {
+    const li = ev.target.closest(".lines li[data-t]");
+    if (li) {
+      if (ev.target.dataset.set) { (ev.target.dataset.set === "start" ? sIn : eIn).value = fmt(+li.dataset.t); draw(); }
+      else play(+li.dataset.play);
+      return;
+    }
+    const a = ev.target.dataset.a;
+    if (!a) return;
+    if (a === "ls") play(parse(sIn.value));
+    if (a === "le") play(parse(eIn.value) - 10);
+    if (a[1] === "-" || a[1] === "+") { const inp = a[0] === "s" ? sIn : eIn; inp.value = fmt(parse(inp.value) + (a[1] === "+" ? 5 : -5)); draw(); }
+    if (a === "save") {
+      const sel = $(".f-series", box);
+      const fields = { start: parse(sIn.value), end: parse(eIn.value), title: $(".f-title", box).value.trim(), speaker: $(".f-speaker", box).value.trim(),
+        series: sel.value, series_name: sel.value ? sel.selectedOptions[0].text : "", scripture: $(".f-scripture", box).value.trim(),
+        date: $(".f-date", box).value, description: $(".f-description", box).value.trim() };
+      if (fields.end - fields.start < 60) return alert("The sermon needs to be at least a minute long.");
+      await api(`/api/batch/items/${x.i}`, { method: "POST", body: { fields, approved: true } });
+      B.open.delete(x.i);
+      B.state = await api("/api/batch");
+      const next = B.state.items.find((y) => y.state === "done" && needsLook(y) && !y.approved);  // open the next one
+      if (next) B.open.add(next.i);
+      renderReview(true);
+    }
+    if (a === "reset") { await api(`/api/batch/items/${x.i}/reset`, { method: "POST" }); B.state = await api("/api/batch"); renderReview(true); }
+    if (a === "redetect") {
+      if (!confirm("Run the sermon detection again for this service? It takes a few minutes.")) return;
+      await api(`/api/batch/items/${x.i}/redetect`, { method: "POST" }); delete B.tx[x.job];
+      box.innerHTML = `<div class="note">Re-running detection… this row updates when it's done.</div>`;
+    }
+  };
+}
+
+// ---- step 5
+async function loadPlan() {
+  const p = await api("/api/batch/plan"), o = p.options;
+  const L = [];
+  L.push(["NAS", o.nas_mp3 ? `Save <b>${p.mp3s} MP3s</b>${o.nas_slide ? ` and <b>${p.slides} slides</b>` : ""} next to their recordings.${p.kept ? ` ${p.kept} hand-made MP3s are kept; the new ones are saved alongside as <code>… (2).mp3</code>.` : ""}${o.existing === "replace" ? " Hand-made MP3s are renamed to <code>….original.mp3</code>." : ""}`
+    : "Nothing is saved to the NAS."]);
+  const wpx = [];
+  if (o.wp_speaker) wpx.push(`change the speaker on <b>${p.speaker_changes.length} posts</b>`);
+  if (o.wp_description) wpx.push(`add a description to posts that have none (up to <b>${p.descriptions}</b>)`);
+  if (o.wp_audio) wpx.push(`<b>replace the audio</b> on ${p.audio} posts`);
+  L.push(["WordPress", wpx.length ? wpx.join("; ") + ". Nothing is published." : "No changes."]);
+  if (o.wp_drafts) L.push(["Drafts", `Create <b>${p.drafts} draft posts</b> for services with no post.`]);
+  L.push(["Voices", o.teach ? Object.entries(p.learn).map(([n, k]) => `${esc(n)} +${k}`).join(", ") || "nothing to learn" : "off"]);
+  $("#aPlan").innerHTML = `<li><span class="k">Approved</span><span><b>${p.approved}</b> services</span></li>` + L.map(([k, v]) => `<li><span class="k">${k}</span><span>${v}</span></li>`).join("");
+  $("#aSpeakersCard").hidden = !(o.wp_speaker && p.speaker_changes.length);
+  $("#aSpeakers tbody").innerHTML = p.speaker_changes.map((c) => `<tr><td>${short(c.date)} · ${esc(c.title || "")}</td><td>${esc(c.now || "—")}</td><td><b>${esc(c.new)}</b></td><td class="note">${esc(c.why)}</td></tr>`).join("");
+  $("#aApply").disabled = $("#aNasOnly").disabled = !p.approved;
+  renderApply();
+}
+function renderApply() {
+  const a = B.state.apply;
+  $("#aRun").hidden = !a;
+  const running = a && a.status === "running";
+  $("#aApply").hidden = $("#aNasOnly").hidden = !!running;
+  $("#aNew").hidden = !(a && a.status === "done");
+  if (!a) return;
+  $("#aNow").textContent = running ? `Applying ${a.done + 1 > a.total ? a.total : a.done + 1} of ${a.total}…` : "Done";
+  $("#aCounts").textContent = `${a.done} / ${a.total}`;
+  $("#aProg").value = a.total ? a.done / a.total : 1;
+  $("#aLog").innerHTML = a.log.slice().reverse().map((l) => `<li>${esc(l)}</li>`).join("");
+}
+async function doApply(nasOnly) {
+  if (!confirm(nasOnly ? "Save the approved MP3s (and slides) to the NAS now? WordPress won't be touched." : "Apply the changes listed above?")) return;
+  await api("/api/batch/apply", { method: "POST", body: { nas_only: nasOnly } });
+  B.state = await api("/api/batch"); renderApply();
+}
+$("#aApply").onclick = () => doApply(false);
+$("#aNasOnly").onclick = () => doApply(true);
+$("#aNew").onclick = async () => {
+  try { await api("/api/batch/control", { method: "POST", body: { action: "clear" } }); } catch (e) { return alert(e.message); }
+  B.open.clear(); B.tx = {}; await batchOpen();
+};
 
 // ======================================================================== boot
 (async () => {

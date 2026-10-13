@@ -166,7 +166,7 @@ def active():
     for p in sorted(config.WORK.glob("*/state.json"), key=lambda p: p.stat().st_mtime):
         j = get(p.parent.name)
         if j and j["status"] not in TERMINAL:
-            out.append({k: j.get(k) for k in ("id", "name", "date", "status", "progress", "message", "auto")})
+            out.append({k: j.get(k) for k in ("id", "name", "date", "status", "progress", "message", "auto", "batch")})
     return out
 
 
@@ -208,6 +208,7 @@ def _analyze(job):
             voice.add_background(E, job["id"])
             if vres:
                 voice.label_segments(segments, W, vres["sim"], vres["thr"])
+                tpath.write_text(json.dumps(segments))  # keep the voice labels for the review screens
                 proposal = detect.refine(segments, vres["start"], vres["end"], total, status, has_llm)
                 sel = (W[:, 0] >= proposal["start"]) & (W[:, 1] <= proposal["end"])
                 voice_info = {"vec": E[sel].mean(0).tolist(), "service_mean": E.mean(0).tolist()}

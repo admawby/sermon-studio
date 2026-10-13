@@ -233,22 +233,72 @@ def refine(segments, vstart, vend, total, status, use_llm):
     before_end = [s for s in segments if s["end"] <= vend + 2]
     end = before_end[-1]["end"] if before_end else vend
     how = "voice"
+    greet = _greeting(segments, vstart)
+    if greet is not None:
+        start, how = greet, "voice + greeting"
     if use_llm and segments:
         try:
             status("Pinpointing the first words of the sermon…")
-            cand = _pick_line([s for s in segments if vstart - 150 <= s["start"] <= vstart + 150], START_Q)["start"]
-            if abs(cand - vstart) <= 60:
+            if greet is not None:
+                raise _SkipStart()
+            # wider after the voice estimate: a scripture reader with a similar voice tends to pull it early
+            cand = _pick_line([s for s in segments if vstart - 150 <= s["start"] <= vstart + 240], START_Q)["start"]
+            if _start_plausible(segments, cand, vstart):
                 start, how = cand, "voice + AI"
+        except _SkipStart:
+            pass
+        except Cancelled:
+            raise
+        except Exception:
+            pass
+        try:
             status("Pinpointing the last words of the sermon…")
             cand = _pick_line([s for s in segments if vend - 150 <= s["start"] <= vend + 60], END_Q)["end"]
             if abs(cand - vend) <= 90:
-                end, how = cand, "voice + AI"
+                end, how = cand, how if how != "voice" else "voice + AI"
         except Cancelled:
             raise
         except Exception:
             pass
     return {"start": max(start - 0.5, 0), "end": min(end + 1.5, total), "source": how,
             "reason": f"The preacher's voice runs from {fmt(start)} to {fmt(end)}."}
+
+
+class _SkipStart(Exception):
+    pass
+
+
+GREETING_RE = re.compile(r"\b(good morning|morning,? (church|everyone|everybody|y'?all)|open (up )?your bibles|"
+                         r"turn (with me )?(in|to) your bibles|grab your bibles)", re.I)
+
+
+def _greeting(segments, vstart):
+    """The preacher greeting the congregation ("good morning…", "open your Bibles…") near the
+    voice-based start, followed by the preacher talking. Returns its time, or None."""
+    for i, s in enumerate(segments):
+        if not (vstart - 150 <= s["start"] <= vstart + 240) or not GREETING_RE.search(s["text"]):
+            continue
+        after = segments[i:i + 7]
+        if sum(x.get("voice") == "P" for x in after) >= 4:
+            return s["start"]
+    return None
+
+
+def _start_plausible(segments, cand, vstart):
+    """Sanity-check the AI's first line against the voice labels.
+    Later than the voice estimate: fine if the preacher is clearly talking from there on.
+    Earlier: only if it's continuous preacher speech all the way to the voice estimate (no long pause,
+    song or other voice in between), so announcements before the songs aren't taken as the sermon."""
+    if abs(cand - vstart) <= 20:
+        return True
+    if cand > vstart:
+        after = [s for s in segments if s["start"] >= cand][:6]
+        return len(after) >= 3 and sum(s.get("voice") == "P" for s in after) >= 3
+    span = [s for s in segments if cand <= s["start"] < vstart]
+    if not span:
+        return False
+    gaps = [b["start"] - a["end"] for a, b in zip(span, span[1:])]
+    return sum(s.get("voice") == "P" for s in span) / len(span) >= 0.7 and max(gaps, default=0) < 20
 
 
 def speaker_from_transcript(segments, start, end, people):

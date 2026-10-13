@@ -174,6 +174,12 @@ def notify_analyzing(job, folder, minutes, slide=None):
     _call(go())
 
 
+def notify_text(text):
+    async def go():
+        await (await _channel()).send(text)
+    _call(go())
+
+
 def notify_error(job):
     async def go():
         ch = await _channel()

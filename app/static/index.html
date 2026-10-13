@@ -17,6 +17,7 @@
     <h1><img src="icons/icon-64.png" alt="" class="logo">Sermon Studio</h1>
     <nav id="tabs">
       <a href="#" data-tab="wizard" class="active">Sermons</a>
+      <a href="#" data-tab="batch">⚡ Batch</a>
       <a href="#" data-tab="settings">⚙ Settings</a>
     </nav>
   </span>
@@ -25,6 +26,103 @@
     <button id="newSermon" class="small" title="Start over with a new recording">＋ New sermon</button>
   </span>
 </header>
+
+<main id="batchView" hidden>
+  <h2>Batch processing</h2>
+  <p class="hint">Re-run past service recordings through Sermon Studio, review what it found, then apply it to the NAS and WordPress in one go. Nothing is changed until the last step.</p>
+  <ol id="bSteps" class="chips"></ol>
+
+  <section class="bstep" data-b="1">
+    <div class="toolbar">
+      <label>From <input type="month" id="bFrom"></label><label>to <input type="month" id="bTo"></label>
+      <select id="bFilter">
+        <option value="all">All recordings</option><option value="post">Only ones with a WordPress post</option>
+        <option value="new">Only ones not processed yet</option><option value="nomp3">Only ones without an MP3 on the NAS</option>
+      </select>
+      <input id="bSearch" placeholder="Search title or speaker…" style="width:220px">
+      <span class="grow"></span>
+      <button class="secondary small" id="bAll">Select all shown</button><button class="secondary small" id="bNone">Select none</button>
+      <button class="secondary small" id="bRefresh" title="Fetch the post list from WordPress again">↻ WordPress</button>
+    </div>
+    <div class="summary" id="bSummary"></div>
+    <div class="twrap"><table class="bt" id="bRecs"><thead><tr><th></th><th>Service</th><th>Recording</th><th>MP3 on the NAS</th><th>WordPress post (title · speaker)</th><th>Status</th></tr></thead><tbody></tbody></table></div>
+    <footer class="nav"><span class="hint">Nothing is changed in this step.</span><button id="bToOptions" disabled>Next: Options →</button></footer>
+  </section>
+
+  <section class="bstep" data-b="2" hidden>
+    <div class="card"><h3>1 · Analyze <span class="tag">always</span></h3>
+      <div class="opt"><div class="what"><b>Transcribe, find the sermon by voice, recognize the preacher, write a title / scripture / description</b>
+        <span class="hint">Same as a normal sermon. Results are only proposals until you apply them in step 5.</span></div></div>
+      <div class="opt"><div class="what"><b>Where the cut comes from</b>
+        <div class="radio"><label><input type="radio" name="o_cut" value="hand"> Where I already made an MP3 by hand, <b>keep my cut</b> (located exactly in the recording); use the AI only where there's no MP3</label>
+        <label><input type="radio" name="o_cut" value="ai"> Use the AI's cut everywhere (my MP3s are only used to show how far it was off)</label></div></div></div>
+      <div class="opt"><div class="what"><b>Teach the app voices from this batch</b><span class="hint">Each approved result adds the preacher's voice to their profile.</span></div><label class="switch"><input type="checkbox" data-o="teach"><span></span></label></div>
+    </div>
+    <div class="card"><h3>2 · NAS</h3>
+      <div class="opt"><div class="what"><b>Save new MP3s next to each recording</b><span class="hint" id="oMp3Hint"></span></div><label class="switch"><input type="checkbox" data-o="nas_mp3"><span></span></label></div>
+      <div class="opt"><div class="what"><b>If a hand-made MP3 is already there</b>
+        <div class="radio"><label><input type="radio" name="o_existing" value="keep"> Keep it, and save the new one alongside as <code>… (2).mp3</code></label>
+        <label><input type="radio" name="o_existing" value="replace"> Replace it, keeping the old one as <code>….original.mp3</code></label>
+        <label><input type="radio" name="o_existing" value="skip"> Skip the NAS for those services</label></div></div></div>
+      <div class="opt"><div class="what"><b>Save the slide image next to it</b><span class="hint">Taken from the WordPress post's featured image.</span></div><label class="switch"><input type="checkbox" data-o="nas_slide"><span></span></label></div>
+    </div>
+    <div class="card"><h3>3 · WordPress <span class="tag new">off by default</span></h3>
+      <p class="hint" style="margin-top:0">Only applied in step 5, after you've reviewed them, and only to the posts you approve. Titles and existing descriptions are never overwritten, and nothing is published.</p>
+      <div class="opt"><div class="what"><b>Fix the speaker (People) where it's someone else</b><span class="hint">Uses the preacher recognized by voice (or your correction in the review).</span></div><label class="switch"><input type="checkbox" data-o="wp_speaker"><span></span></label></div>
+      <div class="opt"><div class="what"><b>Add a description where the post has none</b></div><label class="switch"><input type="checkbox" data-o="wp_description"><span></span></label></div>
+      <div class="opt"><div class="what"><b>Replace the post's audio with the new MP3</b><span class="hint">Podcast apps may re-download changed episodes.</span></div><label class="switch"><input type="checkbox" data-o="wp_audio"><span></span></label></div>
+      <div class="opt"><div class="what"><b>Create draft posts for services that have no post</b><span class="hint">Saved as drafts, never published.</span></div><label class="switch"><input type="checkbox" data-o="wp_drafts"><span></span></label></div>
+    </div>
+    <div class="card"><h3>4 · While it runs</h3>
+      <div class="opt"><div class="what"><b>Order</b><div class="radio"><label><input type="radio" name="o_order" value="newest"> Newest first</label><label><input type="radio" name="o_order" value="oldest"> Oldest first</label></div></div></div>
+      <div class="opt"><div class="what"><b>New Sunday recordings go first</b><span class="hint">Always on: the batch processes one service at a time, so this week's sermon slots in between.</span></div></div>
+      <div class="opt"><div class="what"><b>Discord summary when it finishes</b><span class="hint">One message, not one per sermon.</span></div><label class="switch"><input type="checkbox" data-o="discord"><span></span></label></div>
+      <div class="opt"><div class="what"><b>Free up space as it goes</b><span class="hint">Deletes temporary audio copies (~140 MB per service) once they're not needed. Transcripts and results are kept.</span></div><label class="switch"><input type="checkbox" data-o="free_space"><span></span></label></div>
+    </div>
+    <p id="bCpuWarn" class="notice" hidden>⚠ There's no GPU yet, so this runs on the CPU: about 17 minutes per service. Fine for a handful; the whole archive would take days.</p>
+    <footer class="nav"><button class="secondary" data-bgo="1">← Back</button><span class="actions"><span class="hint" id="bStartHint"></span><button id="bStart">Start processing →</button></span></footer>
+  </section>
+
+  <section class="bstep" data-b="3" hidden>
+    <div class="card">
+      <div class="row"><b id="bNow"></b><b id="bCounts"></b></div>
+      <progress id="bProg" max="1" value="0" style="width:100%;height:14px"></progress>
+      <div class="row"><span class="hint" id="bEta"></span>
+        <span class="actions"><button class="secondary small" id="bPause">⏸ Pause</button><button class="secondary small" id="bStop">■ Stop</button></span></div>
+    </div>
+    <p class="hint">You can close this page; the batch keeps running on the server. Results show up in step 4 as each one finishes.</p>
+    <div class="twrap"><table class="bt" id="bQueue"><thead><tr><th>Service</th><th>Stage</th><th>Result</th></tr></thead><tbody></tbody></table></div>
+    <footer class="nav"><span></span><button id="bToReview">Review results so far →</button></footer>
+  </section>
+
+  <section class="bstep" data-b="4" hidden>
+    <div class="summary" id="rSummary"></div>
+    <div class="toolbar">
+      <select id="rSort"><option value="attention">Needs attention first</option><option value="newest">Newest first</option><option value="diff">Biggest difference first</option></select>
+      <select id="rFilter"><option value="all">All</option><option value="look">Needs a look</option><option value="speaker_differs">Speaker differs</option><option value="no_post">No WordPress post</option><option value="approved">Approved</option><option value="unapproved">Not approved</option></select>
+      <span class="grow"></span>
+      <button class="secondary small" id="rExpand">Expand all that need a look</button>
+      <button class="secondary small" id="rApproveGood">Approve all that look good</button>
+    </div>
+    <div class="twrap tall"><table class="bt" id="rTable"><thead><tr><th></th><th></th><th>Service</th><th>Your cut</th><th>Start / end</th><th>Preacher</th><th>Check</th><th></th></tr></thead><tbody></tbody></table></div>
+    <p class="hint">Click a row to fine-tune it here; <b>Open ↗</b> opens the full Review screen in a new tab. Ticked rows are approved.</p>
+    <footer class="nav"><button class="secondary" data-bgo="3">← Processing</button><span class="actions"><span class="hint" id="rApprovedCount"></span><button id="rToApply">Next: Apply →</button></span></footer>
+  </section>
+
+  <section class="bstep" data-b="5" hidden>
+    <div class="card"><h3>This will:</h3><ul class="status" id="aPlan"></ul></div>
+    <div class="card" id="aSpeakersCard" hidden><h3>Speaker changes</h3>
+      <div class="twrap"><table class="bt" id="aSpeakers"><thead><tr><th>Post</th><th>Now</th><th>Will be</th><th>Why</th></tr></thead><tbody></tbody></table></div></div>
+    <div class="card" id="aRun" hidden>
+      <div class="row"><b id="aNow"></b><b id="aCounts"></b></div>
+      <progress id="aProg" max="1" value="0" style="width:100%;height:14px"></progress>
+      <ul id="aLog" class="log"></ul>
+    </div>
+    <footer class="nav"><button class="secondary" data-bgo="4">← Review</button><span class="actions">
+      <button class="secondary" id="aNasOnly">Only save to the NAS</button><button id="aApply">Apply changes</button>
+      <button id="aNew" hidden>Start a new batch</button></span></footer>
+  </section>
+</main>
 
 <main id="settingsView" hidden>
   <h2 id="settingsTitle">Settings</h2>

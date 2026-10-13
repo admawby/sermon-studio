@@ -82,3 +82,33 @@ def clip(src: Path, out: Path, start: float, length: float):
     run(["ffmpeg", "-y", "-v", "error", "-ss", f"{max(start, 0):.2f}", "-t", f"{length:.2f}", "-i", str(src),
          "-vn", "-ac", "1", "-ar", "44100", "-b:a", "64k", str(out)])
     return out
+
+
+def _pcm(path, sr):
+    import numpy as np
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-ac", "1", "-ar", str(sr), "-af", "highpass=f=100",
+                          "-f", "s16le", "-"], capture_output=True).stdout
+    return np.frombuffer(raw, np.int16).astype(np.float32)
+
+
+def locate(full: Path, cut: Path, sr=2000):
+    """Find where an edited MP3 (e.g. a hand-made sermon cut) sits inside the full recording, by
+    cross-correlating two 30 s snippets. Returns {"start", "end"} in seconds, or None if unsure."""
+    import numpy as np
+    F, C = _pcm(full, sr), _pcm(cut, sr)
+    if len(C) < sr * 180 or len(F) < len(C):
+        return None
+    n = 1 << int(np.ceil(np.log2(len(F) + sr * 30)))
+    FF = np.fft.rfft(F, n)
+
+    def offset(at):
+        snip = C[int(sr * at):int(sr * (at + 30))]
+        c = np.fft.irfft(FF * np.conj(np.fft.rfft(snip, n)), n)[:len(F) - len(snip)]
+        k = int(c.argmax())
+        score = c[k] / (np.linalg.norm(snip) * np.linalg.norm(F[k:k + len(snip)]) + 1e-9)
+        return k / sr - at, score
+    L = len(C) / sr
+    (o1, s1), (o2, s2) = offset(60), offset(L - 90)
+    if abs(o1 - o2) > 1.5 or min(s1, s2) < 0.5:
+        return None
+    return {"start": round(o1, 2), "end": round(o1 + L, 2)}

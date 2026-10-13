@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import archive, audio, config, discord_bot, jobs, transcribe, voice, watcher
+from . import archive, audio, batch, config, discord_bot, jobs, transcribe, voice, watcher
 from . import settings as store
 from .wordpress import DraftGone, WPError, wp
 
@@ -592,6 +592,107 @@ def do_publish(job, status):
         return None
 
 
+# --- Batch tab ---------------------------------------------------------------------------------
+@app.get("/api/batch")
+def batch_state():
+    return batch.view()
+
+
+@app.get("/api/batch/recordings")
+def batch_recordings(refresh: bool = False):
+    if refresh and wp.configured:
+        batch.wp_posts(refresh=True)
+    try:
+        root = resolve(config.ARCHIVE_ROOT)
+    except HTTPException:
+        raise HTTPException(400, "Set the recordings folder in Settings first")
+    return {"recordings": batch.scan(root, config.ARCHIVE_ROOT, virtual_of), "gpu": transcribe.model_info()["device"] == "cuda",
+            "wp": wp.configured, "options": {**batch.DEFAULT_OPTIONS, **(batch.state().get("options") or {})}}
+
+
+class BatchStart(BaseModel):
+    recordings: list
+    options: dict = {}
+
+
+@app.post("/api/batch/start")
+def batch_start(body: BatchStart):
+    try:
+        for r in body.recordings:  # only recordings inside the archive
+            if resolve(config.ARCHIVE_ROOT) not in Path(r["path"]).resolve().parents:
+                raise HTTPException(400, f"{r.get('name')} isn't in the recordings folder")
+        batch.start(body.recordings, body.options)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+    return batch.view()
+
+
+class BatchControl(BaseModel):
+    action: str
+
+
+@app.post("/api/batch/control")
+def batch_control(body: BatchControl):
+    if body.action == "clear":
+        try:
+            batch.clear()
+        except RuntimeError as e:
+            raise HTTPException(409, str(e))
+    else:
+        batch.control(body.action)
+    return batch.view()
+
+
+class BatchItem(BaseModel):
+    fields: dict = {}
+    approved: bool | None = None
+
+
+@app.post("/api/batch/items/{i}")
+def batch_item(i: int, body: BatchItem):
+    batch.update_item(i, body.fields, body.approved)
+    return {"ok": True}
+
+
+@app.post("/api/batch/items/{i}/reset")
+def batch_item_reset(i: int):
+    batch.reset_item(i)
+    return {"ok": True}
+
+
+@app.post("/api/batch/items/{i}/redetect")
+def batch_item_redetect(i: int):
+    it = batch.state()["items"][i]
+    jobs.redetect(must_job(it["job"]))
+    return {"ok": True}
+
+
+class BatchApprove(BaseModel):
+    indices: list[int]
+    approved: bool = True
+
+
+@app.post("/api/batch/approve")
+def batch_approve(body: BatchApprove):
+    batch.approve(body.indices, body.approved)
+    return {"ok": True}
+
+
+@app.get("/api/batch/plan")
+def batch_plan():
+    return batch.plan()
+
+
+class BatchApply(BaseModel):
+    nas_only: bool = False
+
+
+@app.post("/api/batch/apply")
+def batch_apply(body: BatchApply):
+    batch.apply(body.nas_only)
+    return {"ok": True}
+
+
 # --- automation: new recordings on the NAS -> analysis -> Discord approval ------------------
 def _auto_cut(job):
     """The cut + details the app proposes on its own (same defaults the Review step would show)."""
@@ -709,6 +810,10 @@ def _job_for_message(mid):
 
 
 jobs.listeners.append(_on_job_event)
+jobs.listeners.append(batch.on_job_event)
+batch.actions.update(save_cover=_save_cover, encode=do_encode, publish=do_publish, meta=lambda: wp_meta(),
+                     notify=lambda text: discord_bot.notify_text(text) if discord_bot.enabled() else None)
+batch.resume_after_restart()
 jobs.people_list = lambda: (wp_meta().get("speakers") or []) if wp.configured else []
 threading.Thread(target=cleanup_uploads, daemon=True).start()
 discord_bot.start({

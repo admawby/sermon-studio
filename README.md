@@ -51,7 +51,7 @@ The preacher is the one person who talks continuously for 30+ minutes. Sermon St
 1. Speech is cut into ~3-second windows and each gets a **voiceprint** from a small speaker-recognition model (CAM++ trained on VoxCeleb, run locally with [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx); downloaded on first use, ~30 MB).
 2. The longest stretch of continuous speech is the sermon's core; the preacher's voice is learned from its middle.
 3. **Start** = the moment the voice changes most from "someone else" (scripture reader, announcements) to the preacher. **End** = where speech stops after the preacher's last words (the sermon is followed by music).
-4. The local LLM reads only the transcript around each edge, with every line marked *preacher's voice* or not, and picks the exact first and last sentence. It may move an edge by at most a minute; otherwise the voice result stands.
+4. **Start:** the preacher's greeting near that point ("good morning…", "open your Bibles…") followed by the preacher talking. If there isn't one, the local LLM reads the transcript around the edge, with every line marked *preacher's voice* or not, and picks the first sentence. It can move the start later, but only earlier if the stretch in between is continuous preacher speech. That way a scripture reader with a similar voice, or the pastor's announcements before the songs, don't get included. **End:** the LLM picks the last sentence (usually the closing "amen") within about a minute and a half.
 
 Measured on five services whose correct cuts were known (located in the raw recording by audio cross-correlation):
 
@@ -242,6 +242,23 @@ The series and speaker default to those of the last sermon post, the same as in 
 
 The log (`docker logs sermon-studio`) shows `discord: logged in as Sermon Studio#1234` when the bot is connected.
 
+## Batch processing (⚡ Batch tab)
+
+Re-run past service recordings (for example the whole archive once a GPU is installed), review what Sermon Studio found, then apply it in one go. Nothing on the NAS or WordPress changes until the last step.
+
+1. **Choose recordings:** every WAV under the recordings folder, newest first. Each one is matched to its WordPress post, by the date in the post's MP3 file name or else the post date. You can see whether there's a hand-made MP3 next to it and whether it was processed before. Filter by date range or "has a post / not processed / no MP3", and search by title or speaker. The summary estimates the time (about 3–4 min per service on a GPU, about 17 on the CPU).
+2. **Options:**
+   * **Cut:** keep your hand-made cut where there's an MP3 (located exactly in the recording by cross-correlation), or use the AI's cut everywhere.
+   * **Voices:** teach the voice profiles from approved results.
+   * **NAS:** save MP3s and slides. If a hand-made MP3 is already there: keep it and save the new one as `(2).mp3`, rename it to `.original.mp3`, or skip.
+   * **WordPress, all off by default:** fix the speaker, add a missing description, replace the audio, or create drafts for services with no post.
+   * **While it runs:** order, a Discord summary, and freeing temporary space.
+3. **Processing:** one service at a time through the normal queue, so a new Sunday recording found by the watcher goes in between. It shows overall progress, an ETA, and pause, resume and stop. The batch keeps running with the page closed and picks up again after a restart.
+4. **Review results:** each service shows your cut vs the AI's, the preacher (and how they were recognized) and flags: *speaker differs from WordPress*, *voice not recognized*, *start/end differs from your MP3 by more than 30 s*, *no post*, *your MP3 not found in the recording*. Click a row to fine-tune it in place: waveform with your cut dashed, players, start/end with ±5 s and voice-labeled transcript lines, and the details. **Open ↗** opens the full Review screen in a new tab. Approve rows one by one or with **Approve all that look good**.
+5. **Apply:** a summary of every change (MP3s and slides to the NAS, speaker changes with the reason, descriptions, drafts, voices learned), then **Apply changes** or **Only save to the NAS**, with a progress log. Failed items can be retried.
+
+Your hand-made MP3s double as an accuracy check: the review shows the typical difference between the AI's cut and yours. On a two-service test both starts matched to within a second and both ends within 2 s.
+
 ## API
 
 | Method | Path | |
@@ -262,6 +279,7 @@ The log (`docker logs sermon-studio`) shows `discord: logged in as Sermon Studio
 | POST | `/api/jobs/{id}/publish` `{status: draft\|publish}` | upload to WordPress |
 | GET | `/api/wp/meta`, `/api/wp/discover` | series list and default; field discovery |
 | GET | `/api/settings` | monitoring status, what's in progress, Discord/WordPress/AI connection status |
+| GET / POST | `/api/batch` · `/api/batch/recordings` · `/api/batch/start` · `/api/batch/control` · `/api/batch/items/{i}` · `/api/batch/approve` · `/api/batch/plan` · `/api/batch/apply` | batch processing |
 | GET | `/api/active` | sermons being analyzed, and automatic ones waiting for review |
 | POST | `/api/jobs/{id}/discord` | re-send the "sermon is ready" Discord message |
 | GET / POST | `/api/config` (`{values}`) | storage/WordPress/Discord settings (secrets are never returned) |
@@ -281,6 +299,7 @@ app/
   detect.py       sermon boundary detection (LLM + heuristic), title/scripture suggestion
   wordpress.py    wp-admin client: series/speaker sync, media upload, podcast form
   voice.py        voiceprints: find the sermon by the preacher's voice, recognize who preached
+  batch.py        batch processing of past recordings (scan, run, review, apply)
   watcher.py      polls the archive for new recordings
   settings.py     settings changed from the UI (data/settings.json)
   discord_bot.py  Discord notifications, approval buttons, slide upload

@@ -200,6 +200,35 @@ class WordPress:
         link = re.search(r'id="sample-permalink"[^>]*>\s*<a href="([^"]+)"', page)
         return st.group(1), html.unescape(link.group(1)) if link else None
 
+    def update_post(self, post_id, people=None, content_if_empty=None, mp3: Path | None = None):
+        """Change an existing post in place (keeps its status, title and date). Returns what changed."""
+        page = self.admin("GET", f"post.php?post={post_id}&action=edit").text
+        if 'name="post_title"' not in page:
+            raise WPError(f"Post {post_id} isn't in WordPress any more.")
+        form = form_fields(page)
+        cur = dict(form)
+        override, changed = {}, []
+        if people is not None and cur.get("tax_input[people]", "").strip() != people:
+            override["tax_input[people]"] = people
+            changed.append(f"speaker → {people}")
+        if content_if_empty and not re.sub(r"<[^>]+>|\s|&nbsp;", "", cur.get("content", "")):
+            override["content"] = content_if_empty
+            changed.append("description added")
+        if mp3:
+            nonce = re.search(r'"action":"upload-attachment","_wpnonce":"([0-9a-f]+)"', page)
+            if not nonce:
+                raise WPError("Couldn't find the media upload token.")
+            a = self.upload_media(mp3, "audio/mpeg", post_id, nonce.group(1))
+            override[f"acf[{acf_key(page, 'podcast_audio')}]"] = str(a["id"])
+            changed.append("audio replaced")
+        if not override:
+            return []
+        data = [(k, v) for k, v in form if k not in override] + list(override.items()) + [("save", "Update")]
+        r = self.admin("POST", "post.php", data=data, timeout=120)
+        if f"post={post_id}" not in r.url:
+            raise WPError("WordPress didn't accept the change.")
+        return changed
+
     # --- writing -------------------------------------------------------------
     def upload_media(self, path: Path, mime: str, post_id: int, nonce: str):
         with path.open("rb") as f:
