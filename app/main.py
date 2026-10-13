@@ -228,6 +228,21 @@ def get_transcript(jid: str):
     return jobs.transcript(jid)
 
 
+@app.post("/api/jobs/{jid}/discord")
+def send_to_discord(jid: str):
+    """(Re)send the "sermon is ready" message for a finished analysis."""
+    job = must_job(jid)
+    if job["status"] != "ready":
+        raise HTTPException(400, "The analysis isn't finished")
+    if not discord_bot.enabled():
+        raise HTTPException(400, "Set up the Discord bot in Settings first")
+    jobs.update(job, discord=None, notify=job.get("notify") or not job.get("auto"))
+    _on_job_event(job, "ready")
+    if not (jobs.get(jid).get("discord") or {}).get("message"):
+        raise HTTPException(502, "Discord didn't accept the message; see data/logs/sermon-studio.log")
+    return {"ok": True}
+
+
 class Notify(BaseModel):
     on: bool
 

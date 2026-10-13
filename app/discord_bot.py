@@ -124,14 +124,22 @@ def _studio_link(job):
     return f"{config.PUBLIC_URL}/#{job['id']}/3" if config.PUBLIC_URL else None
 
 
-def _view(job, enabled_buttons):
+def _button_ok():
+    """Discord only accepts link buttons with a full address (a dot in the host name, e.g.
+    server.tailnet.ts.net or an IP), not a bare name like http://server:8790."""
+    from urllib.parse import urlsplit
+    host = urlsplit(config.PUBLIC_URL or "").hostname or ""
+    return "." in host
+
+
+def _view(job, enabled_buttons, link=True):
     import discord
     v = discord.ui.View(timeout=None)
     v.add_item(discord.ui.Button(label="Publish", emoji="✅", style=discord.ButtonStyle.success,
                                  custom_id=f"ss:publish:{job['id']}", disabled=not enabled_buttons))
     v.add_item(discord.ui.Button(label="Save as draft", emoji="📝", style=discord.ButtonStyle.secondary,
                                  custom_id=f"ss:draft:{job['id']}", disabled=not enabled_buttons))
-    if _studio_link(job):
+    if link and _studio_link(job) and _button_ok():
         v.add_item(discord.ui.Button(label="Open in Sermon Studio", emoji="✏️", url=_studio_link(job)))
     return v
 
@@ -172,12 +180,24 @@ def notify_ready(job, cut, clips):
                                              f"({_fmt(cut['end'] - cut['start'])})")
         files = [discord.File(clips[0], filename="sermon-start.mp3"), discord.File(clips[1], filename="sermon-end.mp3")]
         has_cover = bool(job.get("cover"))
+        if _studio_link(job) and not _button_ok():
+            embed.add_field(name="Open in Sermon Studio", value=_studio_link(job), inline=False)
         text = ("✅ **The sermon is ready.** Listen to how it starts and ends (attached).\n"
                 + ("Slide is attached already. Press **Publish** when it looks right."
                    if has_cover else
                    "📎 **Reply with this week's sermon slide** (an image) and I'll attach it to the post. "
                    "Publish unlocks once it's here."))
-        msg = await ch.send(text, embed=embed, files=files, view=_view(job, has_cover))
+        try:
+            msg = await ch.send(text, embed=embed, files=files, view=_view(job, has_cover))
+        except discord.HTTPException as e:
+            if "url" not in str(e).lower():
+                raise
+            # Discord only accepts link buttons with a full address (e.g. a Tailscale *.ts.net name);
+            # send without that button and put the link in the text instead
+            log.warning("discord: link button rejected (%s); sending without it", _studio_link(job))
+            files = [discord.File(clips[0], filename="sermon-start.mp3"), discord.File(clips[1], filename="sermon-end.mp3")]
+            msg = await ch.send(text + f"\n✏️ Open in Sermon Studio: {_studio_link(job)}", embed=embed, files=files,
+                                view=_view(job, has_cover, link=False))
         actions["update"](job, discord={"channel": ch.id, "message": msg.id})
     _call(go())
 
