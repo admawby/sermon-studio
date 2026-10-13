@@ -178,7 +178,12 @@ def transcript(jid):
 def _analyze(job):
     src, work = Path(job["source"]), workdir(job["id"])
     update(job, status="preparing", message="Converting audio…", progress=0)
-    total = audio.duration(src)
+    if src.stat().st_size == 0:
+        raise RuntimeError("The recording file is empty (0 bytes). The recorder probably failed that day.")
+    try:
+        total = audio.duration(src)
+    except RuntimeError:
+        raise RuntimeError("This recording can't be read; the file looks damaged or isn't an audio file.")
     audio.prepare(src, work)
     update(job, duration=total)
 

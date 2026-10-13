@@ -56,6 +56,8 @@ def scan(root: Path, pending: dict, on_new):
                 st = p.stat()
             except OSError:
                 continue
+            if st.st_size == 0:  # an empty file from a failed recording: never a "new recording"
+                continue
             if first:
                 state["seen"][key] = st.st_size
             elif pending.get(key) == st.st_size and time.time() - st.st_mtime > 120:

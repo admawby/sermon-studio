@@ -849,7 +849,7 @@ async function batchLoadRecs(refresh) {
   try {
     const r = await api(`/api/batch/recordings${refresh ? "?refresh=true" : ""}`);
     B.recs = r.recordings; B.gpu = r.gpu; B.opts = r.options; B.wp = r.wp;
-    B.sel = new Set(B.recs.filter((x) => !x.job).map((x) => x.path));
+    B.sel = new Set(B.recs.filter((x) => !x.job && !x.unusable).map((x) => x.path));
     if (B.recs.length) {
       $("#bTo").value = B.recs[0].date.slice(0, 7);
       $("#bFrom").value = B.recs[B.recs.length - 1].date.slice(0, 7);
@@ -865,7 +865,10 @@ function shownRecs() {
 }
 function renderRecs() {
   const rows = shownRecs(), tb = $("#bRecs tbody");
-  tb.innerHTML = rows.map((r) => `<tr class="${B.sel.has(r.path) ? "sel" : ""}" data-p="${esc(r.path)}">
+  tb.innerHTML = rows.map((r) => r.unusable ? `<tr class="dim" title="This recording can't be processed">
+    <td><input type="checkbox" disabled></td><td><b>${short(r.date)}</b></td><td><code>${esc(r.name)}</code></td>
+    <td colspan="2"><span class="pill bad">${esc(r.unusable)}</span> <span class="note">The recorder probably failed that day.</span></td><td></td></tr>`
+    : `<tr class="${B.sel.has(r.path) ? "sel" : ""}" data-p="${esc(r.path)}">
     <td><input type="checkbox" ${B.sel.has(r.path) ? "checked" : ""}></td><td><b>${short(r.date)}</b></td>
     <td><code>${esc(r.name)}</code><div class="note">${dur(r.duration)}</div></td>
     <td>${r.mp3 ? `✓ <span class="note">${esc(r.mp3)}</span>` : "—"}</td>
@@ -887,13 +890,14 @@ function renderRecSummary() {
     <div><b>~${fmtH(B.gpu ? gpuH : cpuH)}</b>estimated on the ${B.gpu ? "GPU" : "CPU"}${B.gpu ? "" : `<br><span class="note">(~${fmtH(gpuH)} once the GPU is in)</span>`}</div>
     <div><b>${(sel.reduce((a, r) => a + r.size, 0) / 1e9).toFixed(0)} GB</b>of recordings to read</div>
     <div><b>${sel.filter((r) => r.post).length}</b>matched to a WordPress post</div>
-    <div><b>${sel.filter((r) => !r.post).length}</b>without a post</div>`;
+    <div><b>${sel.filter((r) => !r.post).length}</b>without a post</div>
+    ${B.recs.some((r) => r.unusable) ? `<div><b class="bad">${B.recs.filter((r) => r.unusable).length}</b>can't be used (empty or damaged)</div>` : ""}`;
   $("#bToOptions").disabled = !n;
   B.est = B.gpu ? gpuH : cpuH;
 }
 ["#bFrom", "#bTo", "#bFilter"].forEach((s) => $(s).onchange = renderRecs);
 $("#bSearch").oninput = renderRecs;
-$("#bAll").onclick = () => { shownRecs().forEach((r) => B.sel.add(r.path)); renderRecs(); };
+$("#bAll").onclick = () => { shownRecs().filter((r) => !r.unusable).forEach((r) => B.sel.add(r.path)); renderRecs(); };
 $("#bNone").onclick = () => { B.sel.clear(); renderRecs(); };
 $("#bRefresh").onclick = () => batchLoadRecs(true);
 $("#bToOptions").onclick = () => batchGo(2);

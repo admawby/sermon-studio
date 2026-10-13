@@ -149,8 +149,10 @@ def scan(root: Path, root_virtual: str, virtual_of):
         if post:
             used.add(post["id"])
         jid = jobs.job_id(w)
+        size, length = w.stat().st_size, _duration(w)
+        bad = "empty file (0 bytes)" if size == 0 else "can't read this file" if length is None and w.suffix.lower() == ".wav" else None
         out.append({"date": d.isoformat(), "path": str(w), "virtual": virtual_of(w), "name": w.name,
-                    "duration": _duration(w), "size": w.stat().st_size,
+                    "duration": length, "size": size, "unusable": bad,
                     "mp3": (max(hand, key=lambda m: m.stat().st_size).name if hand else None),
                     "post": post, "job": jid if (config.WORK / jid / "state.json").exists() else None})
     return out
