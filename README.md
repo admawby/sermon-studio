@@ -187,7 +187,7 @@ While monitoring is on, the app scans `ARCHIVE_ROOT` every `WATCH_INTERVAL` seco
 For each new recording, the Discord bot:
 
 1. **Tells you it's analyzing** the recording, with the folder name and a time estimate.
-2. **Sends the proposed sermon** once the analysis is done. The message shows the title, series, speaker, date, scripture, description and start → end times, with MP3 clips of how the sermon starts (first 20 s) and ends (last 10 s). It has buttons for **✅ Publish**, **📝 Save as draft** and **✏️ Open** (one per app address), which opens the Review step if you want to change anything.
+2. **Sends the proposed sermon** once the analysis is done. The message shows the title, series, speaker, date, scripture, description and start → end times, with 10-second MP3 clips of how the sermon starts and ends. It has buttons for **✅ Publish**, **📝 Save as draft** and **✏️ Open** (one per app address), which opens the Review step if you want to change anything.
 3. **Asks for this week's sermon slide.** Reply to the message with the image, or just post it in the channel. It becomes the post's cover, and the Publish and draft buttons unlock once it has arrived.
 
 **The slide:** if there's an image in the same folder as the new recording, the bot uses it as that week's slide and says which file it picked, so you can reply with a different one if it's wrong. If there isn't one, the "analyzing" message asks you to reply with the slide straight away. A slide you send goes on the WordPress post, is embedded in the MP3 and is saved to the NAS folder as `<prefix>YYYYMMDD.jpg`.
