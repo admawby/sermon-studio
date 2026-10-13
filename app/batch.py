@@ -17,7 +17,7 @@ import wave
 from datetime import date, timedelta
 from pathlib import Path
 
-from . import archive, audio, config, jobs, voice
+from . import archive, audio, config, jobs, settings, voice
 from .wordpress import wp
 
 log = logging.getLogger("sermon.batch")
@@ -159,11 +159,17 @@ def scan(root: Path, root_virtual: str, virtual_of):
 
 
 # --- run -------------------------------------------------------------------------------------
+def saved_options():
+    """Options for a new batch: the ones used last time (saved per install), else the defaults."""
+    return {**DEFAULT_OPTIONS, **(settings.get("batch_options") or {})}
+
+
 def start(selected: list, options: dict):
     global _thread
     if state().get("status") in ("running", "paused"):
         raise RuntimeError("A batch is already running")
     opts = {**DEFAULT_OPTIONS, **(options or {})}
+    settings.set(batch_options=opts)  # the next batch starts from these choices
     items = sorted(selected, key=lambda x: x["date"], reverse=opts["order"] == "newest")
     for it in items:
         it.update(state="queued", error=None, approved=False, flags=[], applied=None)

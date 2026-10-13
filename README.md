@@ -255,6 +255,8 @@ Re-run past service recordings (for example the whole archive once a GPU is inst
    * **NAS:** save MP3s and slides. If a hand-made MP3 is already there: keep it and save the new one as `(2).mp3`, rename it to `.original.mp3`, or skip.
    * **WordPress, all off by default:** fix the speaker, add a missing description, replace the audio, or create drafts for services with no post.
    * **While it runs:** order, a Discord summary, and freeing temporary space.
+
+   The options you choose are remembered and pre-selected for the next batch.
 3. **Processing:** one service at a time through the normal queue, so a new Sunday recording found by the watcher goes in between. It shows overall progress, an ETA, and pause, resume and stop. The batch keeps running with the page closed and picks up again after a restart.
 4. **Review results:** each service shows your cut vs the AI's, the preacher (and how they were recognized) and flags: *speaker differs from WordPress*, *voice not recognized*, *start/end differs from your MP3 by more than 30 s*, *no post*, *your MP3 not found in the recording*. Click a row to fine-tune it in place: waveform with your cut dashed, players, start/end with ±5 s and voice-labeled transcript lines, and the details. **Open ↗** opens the full Review screen in a new tab. Approve rows one by one or with **Approve all that look good**.
 5. **Apply:** a summary of every change (MP3s and slides to the NAS, speaker changes with the reason, descriptions, drafts, voices learned), then **Apply changes** or **Only save to the NAS**, with a progress log. Failed items can be retried.

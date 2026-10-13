@@ -607,7 +607,7 @@ def batch_recordings(refresh: bool = False):
     except HTTPException:
         raise HTTPException(400, "Set the recordings folder in Settings first")
     return {"recordings": batch.scan(root, config.ARCHIVE_ROOT, virtual_of), "gpu": transcribe.model_info()["device"] == "cuda",
-            "wp": wp.configured, "options": {**batch.DEFAULT_OPTIONS, **(batch.state().get("options") or {})}}
+            "wp": wp.configured, "options": batch.saved_options()}
 
 
 class BatchStart(BaseModel):
