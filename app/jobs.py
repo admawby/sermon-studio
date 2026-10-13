@@ -41,10 +41,17 @@ def workdir(jid):
     return d
 
 
+_save_lock = threading.Lock()
+
+
 def save(job):
-    p = workdir(job["id"]) / "state.json"
-    p.with_suffix(".tmp").write_text(json.dumps(job))
-    p.with_suffix(".tmp").replace(p)
+    """Write state.json atomically. Several threads (worker, watcher, web requests) save the same job,
+    so writes are serialized and each uses its own temp file."""
+    with _save_lock:
+        p = workdir(job["id"]) / "state.json"
+        tmp = p.with_name(f".state.{threading.get_ident()}.tmp")
+        tmp.write_text(json.dumps(job))
+        tmp.replace(p)
 
 
 def get(jid):
