@@ -456,7 +456,7 @@ $(".cuts").onclick = (e) => {
   if (act === "setStart") $("#start").value = fmt(p.currentTime);
   if (act === "setEnd") $("#end").value = fmt(p.currentTime);
   if (act === "playStart") { p.currentTime = parse($("#start").value); p.play(); scrollToLine(p.currentTime); }
-  if (act === "playEnd") { p.currentTime = parse($("#end").value) - 20; p.play(); scrollToLine(p.currentTime); }
+  if (act === "playEnd") { p.currentTime = parse($("#end").value) - 10; p.play(); scrollToLine(p.currentTime); }
   drawCut();
 };
 $("#redetect").onclick = async (e) => {

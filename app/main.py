@@ -651,7 +651,7 @@ def _on_job_event(job, event):
     jobs.update(job, cut=cut)
     work, src = jobs.workdir(job["id"]), Path(job["source"])
     clips = (audio.clip(src, work / "clip-start.mp3", cut["start"], 20),
-             audio.clip(src, work / "clip-end.mp3", cut["end"] - 20, 20))
+             audio.clip(src, work / "clip-end.mp3", cut["end"] - 10, 10))
     discord_bot.notify_ready(job, cut, clips)
 
 
