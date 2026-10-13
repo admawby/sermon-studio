@@ -6,7 +6,8 @@
 [hidden] { display: none !important; }
 body { margin: 0; font: 15px/1.45 system-ui, sans-serif; background: var(--bg); color: #1f2328; }
 header { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; padding: .8rem 1.5rem; background: #1f2d3d; color: #fff; }
-header h1 { margin: 0; font-size: 1.2rem; }
+header h1 { margin: 0; font-size: 1.2rem; display: flex; align-items: center; gap: .55rem; }
+header .logo { width: 32px; height: 32px; }
 header #engine { color: #b8c4d2; font-size: .85rem; }
 header .headRight { display: flex; align-items: center; gap: 1rem; }
 header .headLeft { display: flex; align-items: baseline; gap: 1.5rem; }
@@ -33,7 +34,8 @@ header h1, #tabs a, header #newSermon { white-space: nowrap; }
 @media (max-width: 720px) {
   header { padding: .6rem .8rem; }
   header #engine { display: none; }
-  header h1 { font-size: 1rem; }
+  header h1 { font-size: 1rem; gap: .4rem; }
+  header .logo { width: 24px; height: 24px; }
   header .headLeft { gap: .6rem; }
   #tabs a { padding: .3rem .45rem; font-size: .85rem; }
   header #newSermon { padding: .3rem .55rem; font-size: .82rem; }
