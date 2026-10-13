@@ -3,7 +3,7 @@
 A self-hosted web app that turns a full Sunday service recording into a sermon podcast episode. It works as a four-step wizard:
 
 1. **Upload:** drop in the service recording and the sermon slide (cover image). You can also pick files already on the NAS.
-2. **Analyze:** the app suggests a NAS folder to archive the recording in (following your existing folder layout). Meanwhile, Whisper transcribes the service locally and a local LLM finds where the sermon starts and ends, then writes a title, the scripture reference and a 2–3 sentence description.
+2. **Analyze:** when you leave step 1, a dialog suggests a NAS folder (following your existing folder layout) and asks, with a switch per file, whether to copy the recording, the slide and the finished MP3 there. Then Whisper transcribes the service locally and a local LLM finds where the sermon starts and ends, then writes a title, the scripture reference and a 2–3 sentence description.
 3. **Review:** check the cut on a waveform with a clickable, searchable transcript. Then edit the title, speaker, date, scripture, description and **series**. Series and speaker come from WordPress and default to those of the most recently edited sermon.
 4. **Publish:** the app encodes a small mono MP3 (volume-levelled, ID3-tagged, cover art embedded) and saves it next to the recording on the NAS. It shows a preview of the post, then uploads it to WordPress as a draft or publishes it.
 
@@ -27,7 +27,7 @@ Built for a church website hosted on The Church Co's WordPress platform. The upl
 | Stage | What happens | Output (in `data/work/<job-id>/`) |
 |---|---|---|
 | Upload | The browser uploads both files into `data/uploads/`, keeping the recording's original timestamp so re-uploading the same file reuses its analysis | `data/uploads/` |
-| Archive | Suggests `<ARCHIVE_ROOT>/YYYY/MM - Month/YYYY_MM_DD`, copying the naming of existing folders and reusing a folder that already exists for that date. On **Save here**, it copies the recording there, and the MP3 later. It never overwrites a file it didn't write itself. | NAS |
+| Archive | When you leave step 1, a **Save to the NAS?** dialog suggests `<recordings folder>/YYYY/MM - Month/YYYY_MM_DD`. It copies the naming of existing folders, reuses a folder that already exists for that date, and looks one level down if the year folders are in a subfolder. There's a switch for each file: recording, slide (`<prefix>YYYYMMDD.jpg`) and finished MP3. Files already in the folder default to off. Copies never overwrite a file the app didn't write itself. | NAS |
 | Prepare | ffmpeg makes a 16 kHz mono WAV for Whisper, a 48 kbps preview MP3 for the browser player and a waveform PNG | `speech.wav`, `preview.mp3`, `waveform.png` |
 | Transcribe | faster-whisper with VAD; `small.en` on CPU, `large-v3-turbo` on GPU | `transcript.json` |
 | Detect | **AI:** a coarse pass over the whole service (30-second lines), then a full-resolution pass around each edge to pin the exact start/end. **Fallback:** the longest stretch of steady speech (speech runs about 140 words per minute, sung lyrics much less) | `proposal.json` |
@@ -159,7 +159,7 @@ ACF fields are looked up by name, so it keeps working if the field keys change. 
 The step bar at the top shows where you are. Click any finished step to go back to it.
 
 1. **Upload.** Drop the WAV into the left box and the sermon slide into the right box, or tap a box to choose a file. Each box shows upload progress and turns green when the file is done. **Next: Analyze** starts the work. If you leave out the image, the app asks before continuing, and you can add one in Review.
-2. **Analyze.** Check the suggested NAS folder. It's marked *existing folder* or *new folder*. Press **Save here**, or **Choose a different folder…** first. The checklist shows each stage: convert, transcribe (with %), find the sermon, write the title and description. On a CPU this takes about 20–25 minutes for a 65-minute service, and with a GPU a couple of minutes. You can close the tab and come back later via **Continue a sermon you already started** in step 1. Each entry there has a **🗑 Delete** button. It removes the sermon's analysis, previews, MP3 and uploaded files from the app, but not anything on the NAS or in WordPress. Tick **🔔 Notify me on Discord when it's done** to get the same Discord message as for automatically found recordings, with clips and Publish/Draft buttons.
+2. **Analyze.** Clicking **Next** first opens **Save to the NAS?**. Check the suggested folder (or **Change…** it) and switch each file on or off. Files already in that folder start switched off. **Don't save to the NAS** keeps everything in Sermon Studio's cache only. Step 2 itself only shows the analysis. The checklist shows each stage: convert, transcribe (with %), find the sermon, write the title and description. On a CPU this takes about 20–25 minutes for a 65-minute service, and with a GPU a couple of minutes. You can close the tab and come back later via **Continue a sermon you already started** in step 1. Each entry there has a **🗑 Delete** button. It removes the sermon's analysis, previews, MP3 and uploaded files from the app, but not anything on the NAS or in WordPress. Tick **🔔 Notify me on Discord when it's done** to get the same Discord message as for automatically found recordings, with clips and Publish/Draft buttons.
 3. **Review.**
    - The shaded part of the waveform is the sermon. Click the waveform to listen anywhere. **▶ Listen** and **▶ Last 20 s** play the edges.
    - Hover a transcript line and press **start here** or **end here**, type a time (`H:MM:SS`), or play to a point and press **Set to playhead**. Search finds phrases like "let's pray".
@@ -214,7 +214,7 @@ The log (`docker logs sermon-studio`) shows `discord: logged in as Sermon Studio
 | POST | `/api/upload/audio` | multipart `file` (+ `last_modified` ms) → `{virtual}` |
 | POST | `/api/upload/image` | multipart `file` → `{virtual}` |
 | POST | `/api/jobs` `{path, cover}` | start (or reopen) analysis of a recording, with an optional cover image path |
-| GET / POST | `/api/jobs/{id}/archive` (`{folder}`) | suggested NAS folder / save the recording (and MP3) there |
+| GET / POST | `/api/jobs/{id}/archive` (`?folder=` · `{folder, recording, slide, mp3, skip}`) | suggested folder + which files are already there · choose what to copy |
 | POST | `/api/jobs/{id}/describe` `{start,end}` | re-write the title, scripture and description for a cut |
 | GET | `/api/jobs`, `/api/jobs/{id}`, `/api/jobs/{id}/transcript` | job state |
 | GET | `/api/jobs/{id}/preview.mp3 \| waveform.png \| cover.jpg \| output.mp3` | files |

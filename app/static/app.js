@@ -36,7 +36,7 @@ function go(n) {
   history.replaceState(null, "", job ? `#${job.id}/${n}` : "#");
   renderStepper();
   window.scrollTo({ top: 0, behavior: "smooth" });
-  if (n === 2) { loadArchive(); }
+  if (n === 2) { renderAnalyze(); }
   if (n === 3) { showReview(); }
   if (n === 4) { renderPublish(); }
   ensurePolling();
@@ -62,7 +62,7 @@ $$("[data-go]").forEach((b) => b.onclick = () => go(+b.dataset.go));
 
 function ensurePolling() {
   const busy = job && (!["ready", "error", "cancelled"].includes(job.status) || job.encoding || job.publishing || job.describing
-    || job.archive?.status === "saving");
+    || job.archive?.status === "saving");  // (NAS copies show in step 4)
   if (busy && !poll) poll = setInterval(refresh, 1500);
   if (!busy && poll) { clearInterval(poll); poll = null; }
 }
@@ -148,9 +148,50 @@ $("#toAnalyze").onclick = async () => {
   $("#toAnalyze").disabled = true;
   try {
     const j = await api("/api/jobs", { method: "POST", body: { path: uploads.audio.virtual, cover: uploads.image?.virtual || "" } });
+    await askNas(j.id);
     await openJob(j.id, 2);
   } catch (e) { alert(e.message); }
   $("#toAnalyze").disabled = false;
+};
+
+// ---- "Save to the NAS?" dialog (shown when leaving step 1)
+let nasJob = null;
+async function askNas(jid, folder = "") {
+  let plan;
+  try { plan = await api(`/api/jobs/${jid}/archive${folder ? `?folder=${encodeURIComponent(folder)}` : ""}`); }
+  catch { return; }  // no archive folder configured: nothing to ask
+  nasJob = jid;
+  $("#nasFolder").textContent = plan.folder;
+  $("#nasFolderTag").textContent = plan.exists ? "existing folder" : "new folder";
+  $("#nasFolderTag").className = "tag" + (plan.exists ? "" : " new");
+  $("#nasFiles").innerHTML = plan.files.map((f) => `<li>
+      <span class="what"><b>${esc(f.label)}</b><code>${esc(f.name)}</code>
+        <span class="hint">${f.present ? " · already in this folder" : ""}${f.note ? ` · ${esc(f.note)}` : ""}</span></span>
+      <label class="switch"><input type="checkbox" data-key="${f.key}" ${f.default ? "checked" : ""}><span></span></label></li>`).join("");
+  $("#nasPicker").hidden = true;
+  const dlg = $("#nasDialog");
+  if (dlg.open) return;
+  dlg.showModal();
+  await new Promise((resolve) => { dlg.onclose = resolve; });
+}
+async function nasSubmit(skip) {
+  const body = { folder: $("#nasFolder").textContent, skip };
+  $$("#nasFiles input").forEach((i) => body[i.dataset.key] = i.checked);
+  try { await api(`/api/jobs/${nasJob}/archive`, { method: "POST", body }); $("#nasDialog").close(); }
+  catch (e) { alert(e.message); }
+}
+$("#nasOk").onclick = () => nasSubmit(false);
+$("#nasSkip").onclick = () => nasSubmit(true);
+$("#nasDialog").oncancel = (e) => { e.preventDefault(); };  // Esc: make an explicit choice
+$("#nasChange").onclick = () => {
+  const box = $("#nasPicker"); box.hidden = !box.hidden;
+  if (!box.hidden) browse(box, $("#nasFolder").textContent.split("/").slice(0, -1).join("/"), "dir", () => {})
+    .catch(() => browse(box, status.archive_root, "dir", () => {}));
+};
+$("#nasUse").onclick = () => {
+  const p = $("#nasPicker").dataset.path;
+  if (!p) return;
+  askNas(nasJob, p);  // re-check which files are already in that folder
 };
 
 async function loadRecent() {
@@ -225,48 +266,7 @@ $("[data-close]").onclick = () => $("#nasPicker").hidden = true;
 // ======================================================================== step 2: analyze
 const ORDER = ["queued", "preparing", "transcribing", "detecting", "describing", "ready"];
 
-async function loadArchive() {
-  renderAnalyze();
-  const a = job.archive || {};
-  if (a.folder) { $("#folder").textContent = a.folder; renderArchive(); return; }
-  const rec = await api(`/api/jobs/${job.id}/archive`);
-  $("#folder").textContent = rec.folder;
-  $("#folderTag").textContent = rec.exists ? "existing folder" : "new folder";
-  $("#folderTag").className = "tag" + (rec.exists ? "" : " new");
-  renderArchive();
-}
-
-function renderArchive() {
-  const a = job.archive || { status: "none" };
-  if (a.folder) $("#folder").textContent = a.folder;
-  const saved = a.status === "saved", saving = a.status === "saving";
-  if (saved) { $("#folderTag").textContent = "saved"; $("#folderTag").className = "tag ok"; }
-  $("#saveNas").hidden = saved;
-  $("#changeFolder").hidden = saved || saving;
-  $("#saveNas").disabled = saving;
-  $("#archiveMsg").textContent = saving ? "Copying to the NAS…" : a.message || "";
-}
-
-$("#saveNas").onclick = async () => {
-  try {
-    await api(`/api/jobs/${job.id}/archive`, { method: "POST", body: { folder: $("#folder").textContent } });
-    job.archive = { ...job.archive, status: "saving" }; renderArchive(); ensurePolling();
-  } catch (e) { alert(e.message); }
-};
-$("#changeFolder").onclick = () => {
-  const box = $("#folderPicker"); box.hidden = !box.hidden;
-  if (!box.hidden) browse(box, $("#folder").textContent.split("/").slice(0, -1).join("/"), "dir", () => {})
-    .catch(() => browse(box, status.archive_root, "dir", () => {}));
-};
-$("#useFolder").onclick = () => {
-  const box = $("#folderPicker");
-  $("#folder").textContent = box.dataset.path;
-  $("#folderTag").textContent = "your choice"; $("#folderTag").className = "tag";
-  box.hidden = true;
-};
-
 function renderAnalyze() {
-  renderArchive();
   const idx = ORDER.indexOf(job.status);
   $$("#checklist li").forEach((li) => {
     const i = ORDER.indexOf(li.dataset.s);
@@ -506,7 +506,7 @@ function renderPublish() {
     $("#sumFile").textContent = `${job.output.name} · ${size(job.output.size)} · ${fmt(job.output.duration)}`;
     const a = job.archive || {};
     $("#sumNas").textContent = a.status === "saved" ? `NAS: ${a.folder} (${a.message})`
-      : a.status === "saving" ? "NAS: copying…" : a.status === "error" ? a.message : "Not saved to the NAS (you can do that in step 2).";
+      : a.status === "saving" ? "NAS: copying…" : a.status === "error" ? a.message : "Not saved to the NAS.";
   }
   if (/Encoding failed/.test(job.message || "")) { $("#encoding").hidden = true; $("#publishMsg").textContent = job.message; }
   const ready = !job.encoding && job.output && !job.publishing;

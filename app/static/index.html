@@ -204,24 +204,6 @@
     <p class="hint jobName"></p>
 
     <div class="card">
-      <h3>Save to the NAS</h3>
-      <p class="hint">Recommended folder for this service. The finished MP3 will be saved there too.</p>
-      <div class="folderRow">
-        <code id="folder">…</code>
-        <span id="folderTag" class="tag"></span>
-      </div>
-      <div class="actions">
-        <button id="saveNas">Save here</button>
-        <button id="changeFolder" class="secondary">Choose a different folder…</button>
-        <span id="archiveMsg" class="hint"></span>
-      </div>
-      <div id="folderPicker" class="picker" hidden>
-        <div class="row"><nav class="crumbs"></nav><button class="small" id="useFolder">Use this folder</button></div>
-        <ul class="files"></ul>
-      </div>
-    </div>
-
-    <div class="card">
       <h3>Find the sermon</h3>
       <ul id="checklist">
         <li data-s="preparing"><span class="st"></span>Convert the audio</li>
@@ -359,6 +341,27 @@
   </section>
 </main>
 </div>
+<dialog id="nasDialog">
+  <form method="dialog">
+    <h3>Save to the NAS?</h3>
+    <p class="hint">The files are in Sermon Studio's cache on this server. Choose which ones to also keep on the NAS.</p>
+    <div class="folderRow">
+      <code id="nasFolder">…</code>
+      <span id="nasFolderTag" class="tag"></span>
+      <button type="button" class="secondary small" id="nasChange">Change…</button>
+    </div>
+    <div id="nasPicker" class="picker" hidden>
+      <div class="row"><nav class="crumbs"></nav><button type="button" class="small" id="nasUse">Use this folder</button></div>
+      <ul class="files"></ul>
+    </div>
+    <ul id="nasFiles" class="toggles"></ul>
+    <p class="hint">Files that are already in this folder are switched off, so nothing gets copied twice.</p>
+    <div class="actions dialogActions">
+      <button type="button" class="secondary" id="nasSkip">Don't save to the NAS</button>
+      <button type="button" id="nasOk">Continue →</button>
+    </div>
+  </form>
+</dialog>
 <script src="app.js"></script>
 </body>
 </html>

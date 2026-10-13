@@ -43,7 +43,13 @@ def recommend(d: date):
     root_virtual = config.ARCHIVE_ROOT.strip("/")
     parts = root_virtual.split("/")
     root = config.ROOTS[parts[0]].joinpath(*parts[1:])
-    years = sorted((c for c in _dirs(root) if re.fullmatch(r"\d{4}", c.name)), key=lambda c: c.name, reverse=True)
+    is_year = lambda c: re.fullmatch(r"\d{4}", c.name)
+    if not any(is_year(c) for c in _dirs(root)):
+        # e.g. the recordings folder is "Church" but the year folders live in "Church/Audio"
+        best = max(_dirs(root), key=lambda c: sum(1 for y in _dirs(c) if is_year(y)), default=None)
+        if best and any(is_year(y) for y in _dirs(best)):
+            root, root_virtual = best, f"{root_virtual}/{best.name}"
+    years = sorted((c for c in _dirs(root) if is_year(c)), key=lambda c: c.name, reverse=True)
     month_examples = [c.name for y in years[:2] for c in _dirs(y)]
     day_names = [c.name for y in years[:2] for mdir in _dirs(y) for c in _dirs(mdir)]
 

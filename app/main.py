@@ -148,7 +148,6 @@ def new_job(body: NewJob):
     if not src.is_file() or src.suffix.lower() not in config.AUDIO_EXT:
         raise HTTPException(400, "Pick an audio file")
     job = jobs.create(src, body.path)
-    _detect_archived(job)
     if body.cover:
         _save_cover(job, resolve(body.cover))
         if body.cover.startswith("Uploads/images/"):
@@ -247,54 +246,122 @@ def redetect(jid: str):
     return {"ok": True}
 
 
+# --- NAS archive: which files to copy where (chosen in a dialog when leaving step 1) -----------
+_archive_lock = threading.Lock()
+
+
+def _names(job):
+    d = job["date"].replace("-", "")
+    return {"recording": Path(job["source"]).name, "slide": f"{config.FILE_PREFIX}{d}.jpg",
+            "mp3": f"{config.FILE_PREFIX}{d}.mp3"}
+
+
+def _archive_plan(job, folder_virtual):
+    """For each file: its name in the folder and whether it's already there. Defaults to copying
+    only what isn't."""
+    folder = resolve(folder_virtual, must_exist=False)
+    names, src = _names(job), Path(job["source"])
+    present = {}
+    if folder.is_dir():
+        files = {p.name: p.stat().st_size for p in folder.iterdir() if p.is_file() and not p.name.startswith(".")}
+        upload = None
+        if job.get("cover_upload"):
+            try:
+                upload = resolve(job["cover_upload"]).stat().st_size
+            except (HTTPException, OSError):
+                pass
+        present = {
+            "recording": names["recording"] in files or src.parent.resolve() == folder.resolve(),
+            # the slide counts as there if our copy is, or an identical copy of the uploaded image is
+            "slide": names["slide"] in files or (upload is not None and upload in {
+                size for n, size in files.items() if Path(n).suffix.lower() in config.IMAGE_EXT}),
+            "mp3": names["mp3"] in files,
+        }
+    rows = [
+        {"key": "recording", "label": "Service recording", "name": names["recording"], "available": True},
+        {"key": "slide", "label": "Sermon slide", "name": names["slide"], "available": bool(job.get("cover")),
+         "note": "" if job.get("cover") else "none yet; saved when you add one"},
+        {"key": "mp3", "label": "Finished MP3", "name": names["mp3"], "available": True,
+         "note": "copied when it's made"},
+    ]
+    for r in rows:
+        r["present"] = bool(present.get(r["key"]))
+        r["default"] = not r["present"]
+    return {"folder": virtual_of(folder) or folder_virtual, "exists": folder.is_dir(), "files": rows}
+
+
 def _detect_archived(job):
-    """A recording picked from inside the archive is already saved where it belongs."""
+    """A recording that's already in the archive (picked from the NAS or found by the watcher):
+    use its folder, and by default add the slide and MP3 next to it unless they're there already."""
     src = Path(job["source"])
     if job["archive"]["status"] == "none" and resolve(config.ARCHIVE_ROOT) in src.parents:
-        jobs.update(job, archive={"status": "saved", "folder": virtual_of(src.parent), "message": "Already on the NAS"})
+        plan = _archive_plan(job, virtual_of(src.parent))
+        jobs.update(job, archive={"status": "saved", "folder": plan["folder"], "message": "Recording is already on the NAS",
+                                  "files": {r["key"]: r["default"] for r in plan["files"]}})
 
 
 @app.get("/api/jobs/{jid}/archive")
-def archive_recommend(jid: str):
+def archive_plan(jid: str, folder: str = ""):
     job = must_job(jid)
-    _detect_archived(job)
-    return {**archive.recommend(date.fromisoformat(job["date"])), "state": job["archive"]}
-
-
-class ArchiveTo(BaseModel):
-    folder: str
+    if not folder:
+        src = Path(job["source"])
+        if job["archive"].get("folder"):
+            folder = job["archive"]["folder"]
+        elif resolve(config.ARCHIVE_ROOT) in src.parents:  # picked from the NAS: its own folder
+            folder = virtual_of(src.parent)
+        else:
+            folder = archive.recommend(date.fromisoformat(job["date"]))["folder"]
+    return {**_archive_plan(job, folder), "state": job["archive"]}
 
 
 def _archive_files(job):
-    """Copy the recording (and the MP3, once it exists) into the job's archive folder."""
-    folder = resolve(job["archive"]["folder"], must_exist=False)
-    jobs.update(job, archive={**job["archive"], "status": "saving", "message": "Copying the recording to the NAS…"})
-    try:
-        ours = set(job["archive"].get("written", []))
-        wav = archive.copy_into(Path(job["source"]), folder, ours)
-        watcher.mark_seen(wav)  # our own copy isn't a "new recording"
-        saved = [wav.name]
-        if job.get("output"):
-            mp3 = Path(job["output"]["path"])
-            saved.append(archive.copy_into(mp3, folder, ours).name)
+    """Copy the files the user chose (recording, slide, MP3 once it exists) into the archive folder."""
+    a = job["archive"]
+    choose = a.get("files") or {}
+    if not a.get("folder") or not any(choose.values()):
+        return
+    with _archive_lock:
+        folder = resolve(a["folder"], must_exist=False)
+        jobs.update(job, archive={**a, "status": "saving", "message": "Copying to the NAS…"})
+        try:
+            ours, names, src = set(a.get("written", [])), _names(job), Path(job["source"])
+            saved = []
+            if choose.get("recording"):
+                wav = archive.copy_into(src, folder, ours)
+                watcher.mark_seen(wav)  # our own copy isn't a "new recording"
+                saved.append(wav.name)
             cover = jobs.workdir(job["id"]) / "cover.jpg"
-            if cover.exists():  # the sermon slide, named like the MP3 (e.g. Sermon_20261018.jpg)
-                saved.append(archive.copy_into(cover, folder, ours, name=f"{mp3.stem}.jpg").name)
-        # only files the app created count as "ours" (never the original recording itself)
-        made = {n for n in saved if not (folder / n).resolve() == Path(job["source"]).resolve()}
-        jobs.update(job, archive={**job["archive"], "status": "saved", "written": sorted(ours | made),
-                                  "message": "Saved " + ", ".join(saved)})
-    except Exception as e:
-        jobs.update(job, archive={**job["archive"], "status": "error", "message": f"Couldn't save to the NAS: {e}"})
+            if choose.get("slide") and cover.exists():
+                saved.append(archive.copy_into(cover, folder, ours, name=names["slide"]).name)
+            if choose.get("mp3") and job.get("output"):
+                saved.append(archive.copy_into(Path(job["output"]["path"]), folder, ours).name)
+            # only files the app created count as "ours" (never the original recording itself)
+            made = {n for n in saved if (folder / n).resolve() != src.resolve()}
+            jobs.update(job, archive={**job["archive"], "status": "saved", "written": sorted(ours | made),
+                                      "message": ("Saved " + ", ".join(saved)) if saved else "Nothing copied yet"})
+        except Exception as e:
+            jobs.update(job, archive={**job["archive"], "status": "error", "message": f"Couldn't save to the NAS: {e}"})
+
+
+class ArchiveChoice(BaseModel):
+    folder: str = ""
+    recording: bool = False
+    slide: bool = False
+    mp3: bool = False
+    skip: bool = False
 
 
 @app.post("/api/jobs/{jid}/archive")
-def archive_save(jid: str, body: ArchiveTo):
+def archive_choose(jid: str, body: ArchiveChoice):
     job = must_job(jid)
+    if body.skip or not (body.recording or body.slide or body.mp3):
+        jobs.update(job, archive={"status": "skipped", "folder": None, "files": {}, "message": "Not saved to the NAS"})
+        return {"ok": True}
     dest = resolve(body.folder, must_exist=False)
     if resolve(config.ARCHIVE_ROOT) not in [dest, *dest.parents]:
         raise HTTPException(400, f"Pick a folder inside {config.ARCHIVE_ROOT}")
-    jobs.update(job, archive={"status": "saving", "folder": virtual_of(dest), "message": ""})
+    jobs.update(job, archive={**job["archive"], "status": "saved", "folder": virtual_of(dest), "message": "",
+                              "files": {"recording": body.recording, "slide": body.slide, "mp3": body.mp3}})
     threading.Thread(target=_archive_files, args=(job,), daemon=True).start()
     return {"ok": True}
 
@@ -315,6 +382,8 @@ def _save_cover(job, src: Path):
     audio.run(["ffmpeg", "-y", "-v", "error", "-i", str(src), "-vf", "scale='min(3000,iw)':-2",
                "-q:v", "2", "-frames:v", "1", str(dest)])
     jobs.update(job, cover=True)
+    if (job["archive"].get("files") or {}).get("slide"):  # keep the NAS copy of the slide current
+        threading.Thread(target=_archive_files, args=(job,), daemon=True).start()
     return {"ok": True}
 
 
@@ -385,7 +454,7 @@ def do_encode(job):
         jobs.update(job, encode_progress=1, output={
             "path": str(out), "name": out.name, "size": out.stat().st_size, "duration": cut["end"] - cut["start"]})
         remember(speaker=cut.get("speaker"), bitrate=cut.get("bitrate"))
-        if job["archive"]["status"] == "saved":
+        if (job["archive"].get("files") or {}).get("mp3"):
             jobs.update(job, message="Copying the MP3 to the NAS…")
             _archive_files(job)
         jobs.update(job, encoding=False, message="Encoded")
