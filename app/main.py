@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import archive, audio, config, discord_bot, jobs, transcribe, watcher
+from . import archive, audio, config, discord_bot, jobs, transcribe, voice, watcher
 from . import settings as store
 from .wordpress import DraftGone, WPError, wp
 
@@ -578,6 +578,11 @@ def do_publish(job, status):
                              progress)
         res["media_sig"] = sig
         res["audio_url"] = res.get("audio_url") or prev.get("audio_url")
+        if job.get("voice") and job["cut"].get("speaker"):  # teach the app this preacher's voice
+            try:
+                voice.learn(job["cut"]["speaker"], job["voice"]["vec"], job["id"])
+            except Exception:
+                log.exception("couldn't learn the preacher's voice")
         _meta_cache["at"] = 0  # the new post is now the "last edited" one
         jobs.update(job, publishing=False, published=res,
                     message="Published" if res["status"] == "publish" else "Saved as draft")
@@ -595,7 +600,7 @@ def _auto_cut(job):
     series = meta.get("default_series")
     return {
         "start": prop["start"], "end": prop["end"], "title": sug.get("title") or f"Sermon {job['date']}",
-        "speaker": meta.get("default_speaker") or settings().get("speaker", ""),
+        "speaker": sug.get("speaker") or meta.get("default_speaker") or settings().get("speaker", ""),
         "series": str(series or ""),
         "series_name": next((s["name"] for s in meta.get("series", []) if s["id"] == series), ""),
         "scripture": sug.get("scripture", ""), "description": sug.get("description", ""), "date": job["date"],
@@ -704,6 +709,7 @@ def _job_for_message(mid):
 
 
 jobs.listeners.append(_on_job_event)
+jobs.people_list = lambda: (wp_meta().get("speakers") or []) if wp.configured else []
 threading.Thread(target=cleanup_uploads, daemon=True).start()
 discord_bot.start({
     "latest_job": _latest_auto_job, "job_for_message": _job_for_message, "job": jobs.get,

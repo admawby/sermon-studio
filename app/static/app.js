@@ -366,12 +366,18 @@ async function fillForm() {
   const cut = job.cut || {}, sug = job.suggest || {}, prop = job.proposal;
   $("#start").value = fmt(cut.start ?? prop.start);
   $("#end").value = fmt(cut.end ?? prop.end);
-  $("#reason").textContent = prop.source === "ai" ? `The AI's pick: ${prop.reason}` : `Best guess (${prop.source}): ${prop.reason}`;
+  $("#reason").textContent = (prop.source || "").startsWith("voice") ? `🎙 Found by the preacher's voice${prop.source.includes("AI") ? " and pinpointed by the AI" : ""}: ${prop.reason}`
+    : prop.source === "ai" ? `The AI's pick: ${prop.reason}` : `Best guess (${prop.source}): ${prop.reason}`;
   $("#title").value = cut.title || sug.title || "";
   $("#scripture").value = cut.scripture || sug.scripture || "";
   $("#description").value = cut.description || sug.description || "";
   $("#date").value = cut.date || job.date;
-  $("#speaker").value = cut.speaker || "";
+  $("#speaker").value = cut.speaker || sug.speaker || "";
+  const d = sug.speaker_detail || {};
+  $("#speakerHint").textContent = cut.speaker && cut.speaker !== sug.speaker ? ""
+    : sug.speaker_source === "voice" ? `🎙 Recognized by voice (match ${d.score}).`
+    : sug.speaker_source === "transcript" ? `📝 From the transcript${d.evidence ? `: “${d.evidence}”` : ""}.`
+    : "⚠ Couldn't recognize the voice, so this is last week's speaker. Please check it.";
   const st = status.settings || {};
   $("#bitrate").value = cut.bitrate || st.bitrate || status.bitrate;
   $("#normalize").checked = cut.normalize ?? true;

@@ -1,5 +1,6 @@
 """One job per source recording, persisted under /data/work/<id>/state.json."""
 import hashlib
+import logging
 import json
 import queue
 import shutil
@@ -10,8 +11,9 @@ import traceback
 from datetime import date
 from pathlib import Path
 
-from . import audio, config, detect, transcribe
+from . import audio, config, detect, transcribe, voice
 
+log = logging.getLogger("sermon.jobs")
 _jobs: dict[str, dict] = {}
 _lock = threading.Lock()
 _queue: "queue.Queue[str]" = queue.Queue()
@@ -109,7 +111,8 @@ def describe(job, start, end):
 
     def go():
         try:
-            update(job, suggest=detect.suggest(transcript(job["id"]), start, end), describing=False)
+            update(job, suggest={**(job.get("suggest") or {}), **detect.suggest(transcript(job["id"]), start, end)},
+                   describing=False)
         except Exception as e:
             update(job, describing=False, message=f"Description failed: {e}")
     threading.Thread(target=go, daemon=True).start()
@@ -194,23 +197,60 @@ def _analyze(job):
         segments = transcribe.transcribe(work / "speech.wav", total, progress)
         tpath.write_text(json.dumps(segments))
 
-    update(job, status="detecting", message="Finding the sermon…", progress=1)
+    update(job, status="detecting", message="Recognizing the preacher's voice…", progress=1)
     status = lambda m: update(job, message=m)
-    proposal = None
-    if detect.ensure_llm(status):
+    has_llm = detect.ensure_llm(status)
+    proposal, vres, voice_info = None, None, None
+    if voice.available():
+        try:
+            W, E = voice.analyze(transcribe._load_wav(work / "speech.wav"), work / "voice.npz", _abort.is_set)
+            vres = voice.find_sermon(W, E)
+            voice.add_background(E, job["id"])
+            if vres:
+                voice.label_segments(segments, W, vres["sim"], vres["thr"])
+                proposal = detect.refine(segments, vres["start"], vres["end"], total, status, has_llm)
+                sel = (W[:, 0] >= proposal["start"]) & (W[:, 1] <= proposal["end"])
+                voice_info = {"vec": E[sel].mean(0).tolist(), "service_mean": E.mean(0).tolist()}
+        except InterruptedError:
+            raise detect.Cancelled()
+        except detect.Cancelled:
+            raise
+        except Exception as e:
+            log.exception("voice detection failed")
+            update(job, message=f"Voice detection failed ({e}); using the transcript only.")
+    if not proposal and has_llm:
         try:
             proposal = detect.llm(segments, total, status)
         except detect.Cancelled:
             raise
         except Exception as e:
-            proposal = None
             update(job, message=f"AI detection failed ({e}); using heuristic.")
     proposal = proposal or detect.heuristic(segments, total)
     update(job, status="describing", message="Writing the title and description…")
     sug = detect.suggest(segments, proposal["start"], proposal["end"])
+    update(job, message="Working out who preached…")
+    sug.update(_who_preached(segments, proposal, voice_info))
     (work / "proposal.json").write_text(json.dumps(proposal))
-    update(job, status="ready", message="Ready for review", proposal=proposal, suggest=sug)
+    update(job, status="ready", message="Ready for review", proposal=proposal, suggest=sug, voice=voice_info)
     _notify(job, "ready")
+
+
+people_list = lambda: []  # set by main.py: names from WordPress "People"
+
+
+def _who_preached(segments, proposal, voice_info):
+    """speaker + how we know: "voice" (matches a learned profile), "transcript" (a clue in what was
+    said), or nothing (Review falls back to the last sermon's speaker)."""
+    if voice_info:
+        m = voice.identify(voice_info["vec"], voice_info["service_mean"])
+        if m["name"]:
+            return {"speaker": m["name"], "speaker_source": "voice", "speaker_detail": m}
+    else:
+        m = None
+    name, evidence = detect.speaker_from_transcript(segments, proposal["start"], proposal["end"], people_list())
+    if name:
+        return {"speaker": name, "speaker_source": "transcript", "speaker_detail": {"evidence": evidence, "voice": m}}
+    return {"speaker": "", "speaker_source": "", "speaker_detail": {"voice": m}}
 
 
 def _worker():

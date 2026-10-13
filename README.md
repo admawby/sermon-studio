@@ -36,16 +36,41 @@ Built for a church website hosted on The Church Co's WordPress platform. The upl
 | Archive | When you leave step 1, a **Save to the NAS?** dialog suggests `<recordings folder>/YYYY/MM - Month/YYYY_MM_DD`. It copies the naming of existing folders, reuses a folder that already exists for that date, and looks one level down if the year folders are in a subfolder. There's a switch for each file: recording, slide (`<prefix>YYYYMMDD.jpg`) and finished MP3. Files already in the folder default to off. Copies never overwrite a file the app didn't write itself. | NAS |
 | Prepare | ffmpeg makes a 16 kHz mono WAV for Whisper, a 48 kbps preview MP3 for the browser player and a waveform PNG | `speech.wav`, `preview.mp3`, `waveform.png` |
 | Transcribe | faster-whisper with VAD; `small.en` on CPU, `large-v3-turbo` on GPU | `transcript.json` |
-| Detect | **AI:** a coarse pass over the whole service (30-second lines), then a full-resolution pass around each edge to pin the exact start/end. **Fallback:** the longest stretch of steady speech (speech runs about 140 words per minute, sung lyrics much less) | `proposal.json` |
+| Detect | **By voice** (see below): voiceprints of every ~3 s of speech find the preacher's continuous talk; the local AI then picks the exact first/last line around each edge. **Fallbacks:** AI-only on the transcript, then the longest stretch of steady speech. | `voice.npz`, `proposal.json` |
+| Who preached | The sermon's voice is compared with profiles learned from sermons you've published; if that's not a clear match the AI looks for clues in the transcript; otherwise last week's speaker (flagged in Review and Discord). | `data/voices.json` |
 | Suggest | Title, main scripture and a 2–3 sentence description from the sermon text (LLM, plus a regex scripture finder). "✨ Write it again" in Review re-runs it for an adjusted cut. | stored in `state.json` |
 | Encode | Cut, 70 Hz high-pass, loudness-normalised to −16 LUFS (the podcast standard), fades, mono MP3 at the chosen bitrate, ID3 tags and cover | `data/output/<FILE_PREFIX>YYYYMMDD.mp3` |
 | Upload | Logs in to wp-admin, uploads the MP3 and cover to the media library and submits the "Add New Podcast" form the same way a person would | link shown in the UI |
 
 Transcripts are cached per recording, so reopening a job is instant and "re-run detection" doesn't re-transcribe.
 
-### Accuracy so far
+### Finding the sermon by voice
 
-On a real 64-minute service with a hand-edited sermon to compare against (found inside the raw recording by audio cross-correlation), the AI cut started 14 s after the hand cut and ended 2 s after it. The suggested title and scripture matched what was actually published. The heuristic fallback (no LLM) found the end within 20 s but started a few minutes early, because it included the scripture reading. The review screen exists so a person always checks the edges before anything is published.
+The preacher is the one person who talks continuously for 30+ minutes. Sermon Studio uses that:
+
+1. Speech is cut into ~3-second windows and each gets a **voiceprint** from a small speaker-recognition model (CAM++ trained on VoxCeleb, run locally with [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx); downloaded on first use, ~30 MB).
+2. The longest stretch of continuous speech is the sermon's core; the preacher's voice is learned from its middle.
+3. **Start** = the moment the voice changes most from "someone else" (scripture reader, announcements) to the preacher. **End** = where speech stops after the preacher's last words (the sermon is followed by music).
+4. The local LLM reads only the transcript around each edge, with every line marked *preacher's voice* or not, and picks the exact first and last sentence. It may move an edge by at most a minute; otherwise the voice result stands.
+
+Measured on five services whose correct cuts were known (located in the raw recording by audio cross-correlation):
+
+| | Start error | End error |
+|---|---|---|
+| Transcript + AI only (old method) | 2–7 min | up to ~1 min |
+| **Voice + AI** | **0–7 s** | **1–20 s** |
+
+A sixth service run end-to-end through the app, with voice profiles that had never heard it, came out at +4 s / +5 s and recognized the preacher.
+
+### Recognizing who preached
+
+The day's sermon voice is compared with **profiles learned from the raw recordings of sermons you publish**: each publish (or draft) adds that preacher's voice. Every recording shares a lot (same room, PA and microphones), so voices are compared after subtracting the average of all analyzed services. The published MP3s aren't used: they were processed differently over the years, which hides the difference between voices.
+
+* Clear voice match → the name is filled in ("🎙 Recognized by voice").
+* Otherwise the local AI looks for clues in what was said ("as John read…", being introduced, the preacher naming himself) → "📝 From the transcript".
+* Otherwise last week's speaker is used, and the Review step and Discord both say to check it.
+
+The name goes into the MP3's ID3 tags and the WordPress *People* field. New preachers are learned the first time you publish one of their sermons.
 
 ---
 
@@ -255,6 +280,7 @@ app/
   transcribe.py   faster-whisper (auto CPU/CUDA)
   detect.py       sermon boundary detection (LLM + heuristic), title/scripture suggestion
   wordpress.py    wp-admin client: series/speaker sync, media upload, podcast form
+  voice.py        voiceprints: find the sermon by the preacher's voice, recognize who preached
   watcher.py      polls the archive for new recordings
   settings.py     settings changed from the UI (data/settings.json)
   discord_bot.py  Discord notifications, approval buttons, slide upload

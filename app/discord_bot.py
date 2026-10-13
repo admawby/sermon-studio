@@ -189,7 +189,11 @@ def notify_ready(job, cut, clips):
         embed = discord.Embed(title=cut["title"] or "(no title)", description=cut.get("description") or "",
                               color=0x3B6EA8)
         embed.add_field(name="Series", value=cut.get("series_name") or "—")
-        embed.add_field(name="Speaker", value=cut.get("speaker") or "—")
+        how = (job.get("suggest") or {}).get("speaker_source")
+        same = cut.get("speaker") == (job.get("suggest") or {}).get("speaker")
+        embed.add_field(name="Speaker", value=(cut.get("speaker") or "—") + (
+            " (recognized by voice)" if how == "voice" and same else " (from the transcript)" if how == "transcript" and same
+            else " (same as last week, check it)"))
         embed.add_field(name="Date", value=cut["date"])
         embed.add_field(name="Scripture", value=cut.get("scripture") or "—")
         embed.add_field(name="Sermon", value=f"{_fmt(cut['start'])} → {_fmt(cut['end'])} "

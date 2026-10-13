@@ -202,3 +202,75 @@ def suggest(segments, start, end):
         except Exception:
             pass
     return out
+
+
+# --- voice-based detection (see voice.py) -------------------------------------------------------
+START_Q = ("the FIRST line of the sermon: the preacher's first words to the congregation (a greeting, "
+           "'open your Bibles', an introduction). A scripture reading or prayer by someone else before it, "
+           "announcements, or dismissing the children are not part of the sermon")
+END_Q = ("the LAST line of the sermon: usually the 'amen' that ends the preacher's own closing prayer. "
+         "Anything after it (another person speaking, 'please stand', singing) is not part of the sermon")
+
+
+def _pick_line(lines, what):
+    text = "\n".join(f"{i:02d} [{s.get('voice', '-')}] [{fmt(s['start'])}] {s['text']}" for i, s in enumerate(lines))
+    r = _ollama("Below are numbered transcript lines from a church service. [P] marks lines spoken in the "
+                "preacher's voice (the person who preaches the sermon); [-] marks other voices, music or the "
+                f"congregation.\nWhich line is {what}? Reply as JSON: {{\"line\": <number>}}\n\n" + text, 8192)
+    k = int(r["line"])
+    if not 0 <= k < len(lines):
+        raise ValueError("line out of range")
+    return lines[k]
+
+
+def refine(segments, vstart, vend, total, status, use_llm):
+    """Exact edges near the voice-based ones: the local AI picks the first/last sermon line from the
+    transcript around each edge (with each line marked by voice); it may move an edge by at most a minute.
+    Without the AI, edges snap to the nearest transcript line."""
+    near = lambda t: min(segments, key=lambda s: abs(s["start"] - t)) if segments else None
+    s0 = near(vstart)
+    start = s0["start"] if s0 else vstart
+    before_end = [s for s in segments if s["end"] <= vend + 2]
+    end = before_end[-1]["end"] if before_end else vend
+    how = "voice"
+    if use_llm and segments:
+        try:
+            status("Pinpointing the first words of the sermon…")
+            cand = _pick_line([s for s in segments if vstart - 150 <= s["start"] <= vstart + 150], START_Q)["start"]
+            if abs(cand - vstart) <= 60:
+                start, how = cand, "voice + AI"
+            status("Pinpointing the last words of the sermon…")
+            cand = _pick_line([s for s in segments if vend - 150 <= s["start"] <= vend + 60], END_Q)["end"]
+            if abs(cand - vend) <= 90:
+                end, how = cand, "voice + AI"
+        except Cancelled:
+            raise
+        except Exception:
+            pass
+    return {"start": max(start - 0.5, 0), "end": min(end + 1.5, total), "source": how,
+            "reason": f"The preacher's voice runs from {fmt(start)} to {fmt(end)}."}
+
+
+def speaker_from_transcript(segments, start, end, people):
+    """Ask the AI who preached, from clues in what was said. Returns (name, evidence) or (None, "")."""
+    if not config.LLM_MODEL or not people:
+        return None, ""
+    words = " ".join(s["text"] for s in segments if start <= s["start"] <= end).split()
+    sample = " ".join(words[:1500]) + " … " + " ".join(words[-300:])
+    before = " ".join(s["text"] for s in segments if start - 240 <= s["start"] < start)
+    try:
+        r = _ollama(
+            "Who preached this sermon? Possible preachers: " + ", ".join(people) + ".\n"
+            "Look for clues: the preacher naming himself (e.g. 'my paraphrase' or 'Mark's paraphrase' said by Mark), "
+            "being introduced ('Pastor X is bringing the message'), or mentioning someone else in a way that "
+            "shows they are NOT the preacher (e.g. 'as John read', 'when Mark gives me the chance to preach' means "
+            "the speaker is not John / not Mark). If there is no real clue, answer null.\n"
+            'Reply as JSON: {"speaker": "<one of the names or null>", "evidence": "<short quote>"}\n\n'
+            f"Just before the sermon: {before}\n\nThe sermon: {sample}", 8192)
+        name = (r.get("speaker") or "").strip()
+        match = next((p for p in people if p.lower() == name.lower()), None)
+        return match, (r.get("evidence") or "").strip()[:160] if match else ""
+    except Cancelled:
+        raise
+    except Exception:
+        return None, ""
