@@ -300,25 +300,32 @@ def build_cut(job, post, span):
     return {
         "start": span["start"], "end": span["end"],
         "title": post.get("title") or sug.get("title") or f"Sermon {job['date']}",
-        "speaker": sug.get("speaker") or post.get("speaker") or meta.get("default_speaker", ""),
+        # recognized voice > the speaker WordPress already has > a guess from the transcript
+        "speaker": (sug.get("speaker") if sug.get("speaker_source") == "voice" else None)
+                   or post.get("speaker") or sug.get("speaker") or meta.get("default_speaker", ""),
         "series": str(series_id or ""), "series_name": series_name,
         "scripture": sug.get("scripture", ""), "description": sug.get("description", ""),
         "date": job["date"], "bitrate": config.MP3_BITRATE, "normalize": True,
     }
 
 
-def _flags(job, post, hand, ai, it):
+def _flags(job, post, hand, ai, it, cut=None):
+    """What needs a look. With `cut` (after you edit a row) the checks use your values: a speaker you
+    chose yourself is never flagged, and the start/end check compares your edges with your MP3."""
     f = []
     sug = job.get("suggest") or {}
     if not post:
         f.append("no_post")
-    if not sug.get("speaker"):
-        f.append("unknown_voice")
-    elif post.get("speaker") and sug["speaker"] != post["speaker"]:
-        f.append("speaker_differs")
+    if cut is None:
+        voice_name = sug.get("speaker") if sug.get("speaker_source") == "voice" else None
+        if not voice_name:
+            f.append("unknown_voice")
+        elif post.get("speaker") and voice_name != post["speaker"]:
+            f.append("speaker_differs")
     if it.get("mp3") and not hand:
         f.append("hand_not_found")
-    if hand and (abs(ai["start"] - hand["start"]) > 30 or abs(ai["end"] - hand["end"]) > 30):
+    edges = cut or ai
+    if hand and (abs(edges["start"] - hand["start"]) > 30 or abs(edges["end"] - hand["end"]) > 30):
         f.append("edges_differ")
     return f
 
@@ -371,8 +378,8 @@ def update_item(i, fields: dict, approved=None):
     cut = {**(job.get("cut") or {}), **{k: v for k, v in fields.items() if k in (
         "start", "end", "title", "speaker", "series", "series_name", "scripture", "description", "date")}}
     jobs.update(job, cut=cut)
-    if approved is not None:
-        _item(i, approved=approved, edited=True)
+    flags = _flags(job, it.get("post") or {}, it.get("hand"), it.get("ai"), it, cut=cut)
+    _item(i, flags=flags, edited=True, **({"approved": approved} if approved is not None else {}))
 
 
 def reset_item(i):
@@ -380,6 +387,7 @@ def reset_item(i):
     job = jobs.get(it["job"])
     use = it["hand"] if (it.get("hand") and state()["options"]["cut"] == "hand") else it["ai"]
     jobs.update(job, cut=build_cut(job, it.get("post") or {}, use))
+    _item(i, flags=_flags(job, it.get("post") or {}, it.get("hand"), it["ai"], it), edited=False)
 
 
 def approve(indices, value=True):

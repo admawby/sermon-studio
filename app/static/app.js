@@ -940,7 +940,9 @@ function renderQueue() {
   $("#bNow").textContent = s.status === "done" ? "Finished" : s.status === "paused" ? "Paused" : s.status === "stopping" ? "Stopping…"
     : cur ? `Processing ${s.current + 1} of ${items.length} · ${short(cur.date)}` : "Starting…";
   $("#bCounts").textContent = `${done} done · ${err} failed · ${items.filter((x) => x.state === "queued").length} waiting`;
-  const frac = (done + err + (cur && cur.job_status === "transcribing" ? (cur.progress || 0) * 0.7 : 0)) / Math.max(1, items.length);
+  const stage = !cur ? 0 : { queued: 0, preparing: 0.03, transcribing: 0.05 + 0.65 * (cur.progress || 0), detecting: 0.78,
+    describing: 0.92, ready: 0.98 }[cur.job_status] || 0;
+  const frac = (done + err + stage) / Math.max(1, items.length);
   $("#bProg").value = frac;
   const times = items.filter((x) => x.state === "done" && x.started && x.finished).map((x) => x.finished - x.started);
   if (s.status === "done") $("#bEta").textContent = `Done ${new Date(s.finished * 1000).toLocaleString()}.`;
@@ -979,7 +981,11 @@ function renderReview(full) {
     ${diffs.length ? `<div><b>±${Math.round(diffs[Math.floor(diffs.length / 2)])} s</b>typical difference from your hand cuts</div>` : ""}
     <div><b>${items.filter((x) => x.approved).length}</b>approved</div>`;
   $("#rApprovedCount").textContent = `${items.filter((x) => x.approved && x.state === "done").length} approved`;
-  if (!full && document.activeElement && document.activeElement.closest("#rTable .editor")) return;  // don't disturb typing
+  // The page refreshes every few seconds: only redraw the table when something changed, and never
+  // while a row is open (redrawing would reset the scroll position and undo unsaved edits).
+  const sig = JSON.stringify(items.map((x) => [x.i, x.state, x.approved, x.flags, x.cut && [x.cut.start, x.cut.end, x.cut.speaker, x.cut.title]]));
+  if (!full && (B.open.size || sig === B.reviewSig)) return;
+  B.reviewSig = sig;
   const sort = $("#rSort").value, f = $("#rFilter").value;
   let rows = items.filter((x) => f === "all" || (f === "look" && needsLook(x)) || (f === "approved" && x.approved) || (f === "unapproved" && !x.approved)
     || (x.flags || []).includes(f));
@@ -995,9 +1001,9 @@ function renderReview(full) {
       ? x.flags.map((k) => `<span class="pill ${FLAG[k][0]}">${FLAG[k][1]}</span>`).join(" ") : `<span class="pill ok">Looks good</span>`;
     const yours = x.hand ? `${fmt(x.hand.start)} → ${fmt(x.hand.end)}<div class="note">your MP3</div>` : `—<div class="note">${x.mp3 ? "MP3 not found in recording" : "no MP3"}</div>`;
     const se = x.diff ? `${sgn(x.diff.start)} / ${sgn(x.diff.end)}<div class="note">AI vs yours</div>` : c.start != null ? `${fmt(c.start)} → ${fmt(c.end)}` : "";
-    return `<tr class="clickable ${B.open.has(x.i) ? "open" : ""}" data-i="${x.i}"><td class="chev">${B.open.has(x.i) ? "▾" : "▸"}</td>
+    return `<tr class="clickable ${B.open.has(x.i) ? "open" : ""}" data-i="${x.i}"><td class="chev c-chev">${B.open.has(x.i) ? "▾" : "▸"}</td>
       <td><input type="checkbox" class="appr" ${x.approved ? "checked" : ""} ${x.state !== "done" ? "disabled" : ""}></td>
-      <td><b>${short(x.date)}</b><div class="note">${esc(x.post?.title || c.title || x.name)}</div></td><td>${yours}</td><td>${se}</td>
+      <td><b>${short(x.date)}</b><div class="note">${esc(x.post?.title || c.title || x.name)}</div></td><td class="c-cut">${yours}</td><td class="c-diff">${se}</td>
       <td>${differs ? `<b class="bad">${esc(c.speaker || "")}</b>` : esc(c.speaker || "—")}<div class="note">${how}${differs ? ` · WordPress says ${esc(x.post?.speaker || "")}` : ""}</div></td>
       <td>${fl}</td><td><a class="button secondary small" href="/#${x.job}/3" target="_blank" rel="noopener">Open ↗</a></td></tr>
       ${B.open.has(x.i) ? `<tr class="editor" data-i="${x.i}"><td colspan="8"><div class="ed">Loading…</div></td></tr>` : ""}`;

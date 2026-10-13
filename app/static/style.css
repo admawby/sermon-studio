@@ -239,7 +239,7 @@ body.setupMode header #tabs, body.setupMode header #newSermon { display: none; }
 .summary b { font-size: 1.25rem; display: block; }
 .summary div { color: var(--muted); font-size: .85rem; }
 .twrap { border: 1px solid var(--line); border-radius: 10px; overflow: auto; max-height: 70vh; background: #fff; }
-.twrap.tall { max-height: none; overflow: visible; }  /* review table: expanded rows must not be clipped */
+.twrap.tall { max-height: none; overflow-x: auto; overflow-y: visible; }  /* review table: expanded rows must not be clipped */
 table.bt { width: 100%; border-collapse: collapse; font-size: .9rem; }
 table.bt th { text-align: left; font-weight: 600; color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .03em; padding: .5rem .6rem; border-bottom: 2px solid var(--line); background: #fafbfc; position: sticky; top: 0; z-index: 1; }
 table.bt td { padding: .5rem .6rem; border-bottom: 1px solid #eef0f3; vertical-align: middle; }
@@ -289,3 +289,18 @@ ul.log li { padding: .2rem 0; border-bottom: 1px solid #f3f4f6; }
 .fields .wide { grid-column: 1 / -1; }
 .edact { display: flex; gap: .5rem; align-items: center; margin-top: .8rem; flex-wrap: wrap; }
 @media (max-width: 900px) { .ed, .edges { grid-template-columns: 1fr; } }
+/* phones: nothing may be wider than the screen */
+html, body { max-width: 100%; overflow-x: hidden; }
+.row { flex-wrap: wrap; }
+@media (max-width: 720px) {
+  header { flex-wrap: wrap; row-gap: .4rem; }
+  header .headLeft { flex-wrap: wrap; row-gap: .3rem; }
+  main { padding: 0 .7rem; }
+  table.bt { font-size: .85rem; }
+  table.bt td, table.bt th { padding: .45rem .4rem; }
+  table.bt .c-cut, table.bt .c-diff, table.bt .c-chev { display: none; }
+  .editor > td { padding: 0 .3rem .8rem !important; }
+  .ed { padding: .7rem; }
+  .summary { gap: .8rem 1.2rem; }
+  .toolbar > * { max-width: 100%; }
+}
