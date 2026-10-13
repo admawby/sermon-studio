@@ -83,6 +83,8 @@ The name goes into the MP3's ID3 tags and the WordPress *People* field. New prea
 
 ## Install
 
+> **New here?** Follow the step-by-step guide with screenshots: **[docs/SETUP.md](docs/SETUP.md)**.
+
 ```bash
 git clone https://github.com/<your-user>/sermon-studio.git ~/Docker/sermon-studio
 cd ~/Docker/sermon-studio
