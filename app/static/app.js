@@ -951,6 +951,8 @@ function renderQueue() {
   } else $("#bEta").textContent = "Working out how long this will take…";
   $("#bPause").textContent = s.status === "paused" ? "▶ Resume" : "⏸ Pause";
   $("#bPause").hidden = $("#bStop").hidden = !["running", "paused"].includes(s.status);
+  $("#bNew").hidden = s.status !== "done";
+  $("#bToReview").hidden = !items.some((x) => x.state === "done");
   $("#bQueue tbody").innerHTML = items.map((x) => {
     const st = x.state === "done" ? `<span class="pill ok">✓ done</span>` : x.state === "error" ? `<span class="pill bad">failed</span> <span class="note">${esc(x.error || "")}</span>`
       : x.state === "running" ? `<span class="pill blue">⏳ ${STAGE[x.job_status] || "Starting"}</span>${x.job_status === "transcribing" ? ` <span class="bar"><i style="width:${Math.round((x.progress || 0) * 100)}%"></i></span> ${Math.round((x.progress || 0) * 100)}%` : ""}`
@@ -1123,7 +1125,7 @@ function renderApply() {
   $("#aRun").hidden = !a;
   const running = a && a.status === "running";
   $("#aApply").hidden = $("#aNasOnly").hidden = !!running;
-  $("#aNew").hidden = !(a && a.status === "done");
+  $("#aNew").hidden = !(B.state.status === "done" && (!a || a.status === "done"));
   if (!a) return;
   $("#aNow").textContent = running ? `Applying ${a.done + 1 > a.total ? a.total : a.done + 1} of ${a.total}…` : "Done";
   $("#aCounts").textContent = `${a.done} / ${a.total}`;
@@ -1137,6 +1139,7 @@ async function doApply(nasOnly) {
 }
 $("#aApply").onclick = () => doApply(false);
 $("#aNasOnly").onclick = () => doApply(true);
+$("#bNew").onclick = () => $("#aNew").click();
 $("#aNew").onclick = async () => {
   try { await api("/api/batch/control", { method: "POST", body: { action: "clear" } }); } catch (e) { return alert(e.message); }
   B.open.clear(); B.tx = {}; await batchOpen();
