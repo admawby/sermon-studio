@@ -180,7 +180,7 @@ To make your first sermon:
 4. **Review:** check the start and end on the waveform and transcript, and the details.
 5. **Publish:** make the MP3, then **Upload as draft** (recommended the first time; check it in WP Admin) or **Publish now**.
 
-**Recognizing the preacher.** The app learns voices from the sermons you publish. The first time a preacher appears it can't know their name yet: it suggests last week's speaker and says so. Choose the right name before publishing, and from then on that voice is recognized.
+**Recognizing the preacher.** The app learns voices from the sermons you publish. The first time a preacher appears it can't know their name yet: it suggests your **default preacher** (⚙ Settings → *Default preacher*, chosen from your WordPress *People*), or last week's speaker if you haven't set one, and says so. Choose the right name before publishing, and from then on that voice is recognized.
 
 Everything from the wizard can be changed later under **⚙ Settings**:
 

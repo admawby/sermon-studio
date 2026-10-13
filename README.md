@@ -67,6 +67,7 @@ A sixth service run end-to-end through the app, with voice profiles that had nev
 The day's sermon voice is compared with **profiles learned from the raw recordings of sermons you publish**: each publish (or draft) adds that preacher's voice. Every recording shares a lot (same room, PA and microphones), so voices are compared after subtracting the average of all analyzed services. The published MP3s aren't used: they were processed differently over the years, which hides the difference between voices.
 
 * Clear voice match → the name is filled in ("🎙 Recognized by voice").
+* Otherwise, if you've chosen a **default preacher** (⚙ Settings → Default preacher, picked from your WordPress *People*), that name is used → "👤 Default preacher… please check it".
 * Otherwise the local AI looks for clues in what was said ("as John read…", being introduced, the preacher naming himself) → "📝 From the transcript".
 * Otherwise last week's speaker is used, and the Review step and Discord both say to check it.
 
@@ -259,7 +260,7 @@ Re-run past service recordings (for example the whole archive once a GPU is inst
    The options you choose are remembered and pre-selected for the next batch.
 3. **Processing:** one service at a time through the normal queue, so a new Sunday recording found by the watcher goes in between. It shows overall progress, an ETA, and pause, resume and stop. The batch keeps running with the page closed and picks up again after a restart.
 4. **Review results:** each service shows your cut vs the AI's, the preacher (and how they were recognized) and flags: *speaker differs from WordPress*, *voice not recognized*, *start/end differs from your MP3 by more than 30 s*, *no post*, *your MP3 not found in the recording*. Click a row to fine-tune it in place: waveform with your cut dashed, players, start/end with ±5 s and voice-labeled transcript lines, and the details. **Open ↗** opens the full Review screen in a new tab. Approve rows one by one or with **Approve all that look good**.
-5. **Apply:** a summary of every change (MP3s and slides to the NAS, speaker changes with the reason, descriptions, drafts, voices learned), then **Apply changes** or **Only save to the NAS**, with a progress log. Failed items can be retried.
+5. **Apply:** a summary of every change (MP3s and slides to the NAS, speaker changes with the reason, descriptions, drafts, voices learned), then **Apply changes** or **Only save to the NAS**. While it runs, each service shows what's happening (making the MP3 with %, copying to the NAS, updating WordPress, learning the voice), then what was done. Once everything you approved is applied the Apply buttons disappear; failed services get a *Retry* button. In a batch the speaker is: recognized voice → the speaker WordPress already lists → default preacher.
 
 Your hand-made MP3s double as an accuracy check: the review shows the typical difference between the AI's cut and yours. On a two-service test both starts matched to within a second and both ends within 2 s.
 

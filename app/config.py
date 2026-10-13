@@ -44,7 +44,9 @@ DISCORD_TOKEN = env("DISCORD_TOKEN")
 DISCORD_USER_ID = int(env("DISCORD_USER_ID", "0") or 0)
 DISCORD_CHANNEL_ID = int(env("DISCORD_CHANNEL_ID", "0") or 0)
 PUBLIC_URL = env("PUBLIC_URL").rstrip("/")  # address on the home network
-PUBLIC_URL_REMOTE = env("PUBLIC_URL_REMOTE").rstrip("/")  # optional: address when away (e.g. Tailscale)
+PUBLIC_URL_REMOTE = env("PUBLIC_URL_REMOTE").rstrip("/")
+# used when the preacher's voice isn't recognized with confidence (one of the WordPress People)
+DEFAULT_PREACHER = env("DEFAULT_PREACHER")  # optional: address when away (e.g. Tailscale)
 
 # --- settings the web UI can change (Settings tab / first-run setup) ---------------------------
 # Stored in data/settings.json under "config"; they override the values from .env above.
@@ -52,7 +54,7 @@ EDITABLE = {
     "ARCHIVE_ROOT": str, "START_PATH": str, "FILE_PREFIX": str,
     "WP_URL": str, "WP_USER": str, "WP_PASSWORD": str,
     "DISCORD_TOKEN": str, "DISCORD_USER_ID": int, "DISCORD_CHANNEL_ID": int, "PUBLIC_URL": str,
-    "PUBLIC_URL_REMOTE": str,
+    "PUBLIC_URL_REMOTE": str, "DEFAULT_PREACHER": str,
 }
 SECRET = {"WP_PASSWORD", "DISCORD_TOKEN"}
 _ENV = {k: globals()[k] for k in EDITABLE}

@@ -199,7 +199,7 @@ def notify_ready(job, cut, clips):
         same = cut.get("speaker") == (job.get("suggest") or {}).get("speaker")
         embed.add_field(name="Speaker", value=(cut.get("speaker") or "—") + (
             " (recognized by voice)" if how == "voice" and same else " (from the transcript)" if how == "transcript" and same
-            else " (same as last week, check it)"))
+            else " (default preacher, voice not recognized)" if how == "default" and same else " (same as last week, check it)"))
         embed.add_field(name="Date", value=cut["date"])
         embed.add_field(name="Scripture", value=cut.get("scripture") or "—")
         embed.add_field(name="Sermon", value=f"{_fmt(cut['start'])} → {_fmt(cut['end'])} "

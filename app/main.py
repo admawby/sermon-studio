@@ -701,7 +701,7 @@ def _auto_cut(job):
     series = meta.get("default_series")
     return {
         "start": prop["start"], "end": prop["end"], "title": sug.get("title") or f"Sermon {job['date']}",
-        "speaker": sug.get("speaker") or meta.get("default_speaker") or settings().get("speaker", ""),
+        "speaker": sug.get("speaker") or config.DEFAULT_PREACHER or meta.get("default_speaker") or settings().get("speaker", ""),
         "series": str(series or ""),
         "series_name": next((s["name"] for s in meta.get("series", []) if s["id"] == series), ""),
         "scripture": sug.get("scripture", ""), "description": sug.get("description", ""), "date": job["date"],
@@ -892,7 +892,8 @@ def get_config():
         resolve(config.ARCHIVE_ROOT)
     except HTTPException:
         archive_ok = False
-    return {"values": values, "roots": _root_info(), "archive_ok": archive_ok,
+    voices = {n: v.get("n", 0) for n, v in voice.profiles()["people"].items()}
+    return {"values": values, "roots": _root_info(), "archive_ok": archive_ok, "voices": voices,
             "discord": {"configured": discord_bot.enabled(), "connected": discord_bot.connected(),
                         "name": discord_bot.name(), "error": discord_bot.error},
             "wordpress": {"configured": wp.configured}, "setup_complete": setup_complete()}

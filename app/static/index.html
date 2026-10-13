@@ -116,9 +116,11 @@
     <div class="card" id="aRun" hidden>
       <div class="row"><b id="aNow"></b><b id="aCounts"></b></div>
       <progress id="aProg" max="1" value="0" style="width:100%;height:14px"></progress>
-      <ul id="aLog" class="log"></ul>
+      <p class="hint" id="aHint">You can close this page; applying keeps running on the server.</p>
     </div>
+    <div class="twrap" id="aTableWrap" hidden><table class="bt" id="aTable"><thead><tr><th>Service</th><th>Stage</th><th>Result</th></tr></thead><tbody></tbody></table></div>
     <footer class="nav"><button class="secondary" data-bgo="4">← Review</button><span class="actions">
+      <span class="hint" id="aDone"></span>
       <button class="secondary" id="aNasOnly">Only save to the NAS</button><button id="aApply">Apply changes</button>
       <button id="aNew" hidden>Start a new batch</button></span></footer>
   </section>
@@ -192,6 +194,16 @@
       <label>Password <input id="cfgWpPass" type="password" autocomplete="new-password"></label>
     </div>
     <div class="actions cardActions"><button id="saveWordpress">Save</button><button class="secondary" id="testWordpress">Test login</button><span class="hint msg"></span></div>
+  </section>
+
+  <section class="card cfg settingsOnly" id="cardPreacher">
+    <h3>Default preacher</h3>
+    <p class="hint">Used when the app can't recognize the preacher's voice with confidence, e.g. a recording made with a different setup
+      or someone it hasn't heard yet. You'll still see a note to check it before publishing.</p>
+    <label class="field">Default preacher
+      <select id="cfgDefaultPreacher"><option value="">(none: use the last sermon's speaker)</option></select></label>
+    <p class="hint" id="voicesKnown"></p>
+    <div class="actions cardActions"><button id="savePreacher">Save</button><span class="hint msg"></span></div>
   </section>
 
   <section class="card cfg" id="cardDiscord" data-title="Discord">

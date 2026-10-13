@@ -245,14 +245,17 @@ people_list = lambda: []  # set by main.py: names from WordPress "People"
 
 
 def _who_preached(segments, proposal, voice_info):
-    """speaker + how we know: "voice" (matches a learned profile), "transcript" (a clue in what was
-    said), or nothing (Review falls back to the last sermon's speaker)."""
+    """speaker + how we know: "voice" (a confident match with a learned profile), "default" (the
+    default preacher from Settings), "transcript" (a clue in what was said), or nothing (Review falls
+    back to the last sermon's speaker)."""
     if voice_info:
         m = voice.identify(voice_info["vec"], voice_info["service_mean"])
         if m["name"]:
             return {"speaker": m["name"], "speaker_source": "voice", "speaker_detail": m}
     else:
         m = None
+    if config.DEFAULT_PREACHER:
+        return {"speaker": config.DEFAULT_PREACHER, "speaker_source": "default", "speaker_detail": {"voice": m}}
     name, evidence = detect.speaker_from_transcript(segments, proposal["start"], proposal["end"], people_list())
     if name:
         return {"speaker": name, "speaker_source": "transcript", "speaker_detail": {"evidence": evidence, "voice": m}}

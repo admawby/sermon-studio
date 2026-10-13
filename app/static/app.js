@@ -377,6 +377,7 @@ async function fillForm() {
   $("#speakerHint").textContent = cut.speaker && cut.speaker !== sug.speaker ? ""
     : sug.speaker_source === "voice" ? `🎙 Recognized by voice (match ${d.score}).`
     : sug.speaker_source === "transcript" ? `📝 From the transcript${d.evidence ? `: “${d.evidence}”` : ""}.`
+    : sug.speaker_source === "default" ? "👤 Default preacher: the voice wasn't recognized with confidence. Please check it."
     : "⚠ Couldn't recognize the voice, so this is last week's speaker. Please check it.";
   const st = status.settings || {};
   $("#bitrate").value = cut.bitrate || st.bitrate || status.bitrate;
@@ -656,7 +657,19 @@ function renderConfig(fillForms) {
   $("#cfgDcUser").value = v.DISCORD_USER_ID || ""; $("#cfgDcChannel").value = v.DISCORD_CHANNEL_ID || "";
   $("#cfgPublicUrl").value = v.PUBLIC_URL || "";
   $("#cfgPublicUrl2").value = v.PUBLIC_URL_REMOTE || "";
+  fillPreachers(v.DEFAULT_PREACHER || "");
 }
+async function fillPreachers(current) {
+  const sel = $("#cfgDefaultPreacher");
+  const meta = wpMeta || await api("/api/wp/meta").catch(() => ({ speakers: [] }));
+  const names = [...new Set([...(meta.speakers || []), ...Object.keys(cfg.voices || {}), current].filter(Boolean))].sort();
+  sel.innerHTML = `<option value="">(none: use the last sermon's speaker)</option>` + names.map((n) => `<option>${esc(n)}</option>`).join("");
+  sel.value = current;
+  const v = Object.entries(cfg.voices || {});
+  $("#voicesKnown").textContent = v.length ? "Voices the app recognizes: " + v.map(([n, k]) => `${n} (${k} sermon${k === 1 ? "" : "s"})`).join(", ") + "."
+    : "The app hasn't learned any voices yet. It learns them from the sermons you publish.";
+}
+$("#savePreacher").onclick = () => saveValues("cardPreacher", { DEFAULT_PREACHER: $("#cfgDefaultPreacher").value });
 $("#cfgPrefix").oninput = (e) => $("#prefixEx").textContent = e.target.value || "Sermon_";
 $("#useThisUrl").onclick = () => $("#cfgPublicUrl").value = location.origin;
 
@@ -995,7 +1008,9 @@ function renderReview(full) {
   const tb = $("#rTable tbody");
   const keepOpen = [...B.open];
   tb.innerHTML = rows.map((x) => {
-    const c = x.cut || {}, how = x.speaker_source === "voice" ? "🎙 by voice" : x.speaker_source === "transcript" ? "📝 transcript" : "not recognized";
+    const c = x.cut || {}, how = x.speaker_source === "voice" ? "🎙 by voice"
+      : x.post?.speaker && c.speaker === x.post.speaker ? "from WordPress" : x.speaker_source === "default" ? "👤 default preacher"
+      : x.speaker_source === "transcript" ? "📝 transcript" : "not recognized";
     const differs = (x.flags || []).includes("speaker_differs");
     const fl = x.state === "error" ? `<span class="pill bad">failed</span>` : (x.flags || []).length
       ? x.flags.map((k) => `<span class="pill ${FLAG[k][0]}">${FLAG[k][1]}</span>`).join(" ") : `<span class="pill ok">Looks good</span>`;
@@ -1035,7 +1050,10 @@ async function buildEditor(tr, x) {
   const pct = (t) => `${(t / total) * 100}%`;
   const series = (B.meta.series || []).map((s) => `<option value="${s.id}" ${String(s.id) === String(c.series) ? "selected" : ""}>${esc(s.name)}</option>`).join("");
   const d = x.speaker_detail || {};
-  const spHint = x.speaker_source === "voice" ? `🎙 voice match ${d.score}` : x.speaker_source === "transcript" ? `📝 ${esc(d.evidence || "from the transcript")}` : "⚠ voice not recognized";
+  const spHint = x.speaker_source === "voice" ? `🎙 voice match ${d.score}`
+    : x.post?.speaker && c.speaker === x.post.speaker ? "⚠ voice not recognized, kept the speaker from WordPress"
+    : x.speaker_source === "default" ? "👤 default preacher (voice not recognized)"
+    : x.speaker_source === "transcript" ? `📝 ${esc(d.evidence || "from the transcript")}` : "⚠ voice not recognized";
   box.innerHTML = `<div>
       <h4>Sermon audio</h4>
       <div class="mwave"><img src="/api/jobs/${x.job}/waveform.png" alt=""><div class="reg"></div>${x.hand ? `<div class="old" style="left:${pct(x.hand.start)};width:${pct(x.hand.end - x.hand.start)}"></div>` : ""}<div class="ph"></div></div>
@@ -1126,17 +1144,51 @@ async function loadPlan() {
   $("#aApply").disabled = $("#aNasOnly").disabled = !p.approved;
   renderApply();
 }
+const APPLY_STAGE = { waiting: "Waiting", encoding: "Making the MP3", wordpress: "Updating WordPress", voice: "Learning the voice" };
+function applyStageText(x) {
+  if (x.apply_stage === "encoding") {
+    if (x.archive_status === "saving" || (x.encode_progress >= 1 && x.encoding)) return ["blue", "⏳ Copying to the NAS", null];
+    return ["blue", "⏳ Making the MP3", x.encode_progress || 0];
+  }
+  if (x.apply_stage === "done") return ["ok", "✓ done", null];
+  if (x.apply_stage === "failed") return ["bad", "failed", null];
+  if (x.apply_stage === "waiting") return ["", "waiting", null];
+  return ["blue", "⏳ " + (APPLY_STAGE[x.apply_stage] || x.apply_stage), null];
+}
+function pendingApply() {
+  return B.state.items.filter((x) => x.state === "done" && x.approved && !(x.applied && x.applied.ok));
+}
 function renderApply() {
-  const a = B.state.apply;
-  $("#aRun").hidden = !a;
-  const running = a && a.status === "running";
-  $("#aApply").hidden = $("#aNasOnly").hidden = !!running;
-  $("#aNew").hidden = !(B.state.status === "done" && (!a || a.status === "done"));
-  if (!a) return;
-  $("#aNow").textContent = running ? `Applying ${a.done + 1 > a.total ? a.total : a.done + 1} of ${a.total}…` : "Done";
-  $("#aCounts").textContent = `${a.done} / ${a.total}`;
-  $("#aProg").value = a.total ? a.done / a.total : 1;
-  $("#aLog").innerHTML = a.log.slice().reverse().map((l) => `<li>${esc(l)}</li>`).join("");
+  const a = B.state.apply, running = a && a.status === "running";
+  const rows = B.state.items.filter((x) => x.apply_stage);
+  $("#aRun").hidden = !a; $("#aTableWrap").hidden = !rows.length;
+  if (a) {
+    const cur = a.current != null ? B.state.items[a.current] : null;
+    const [, label, pct] = cur ? applyStageText(cur) : [];
+    $("#aNow").textContent = running ? (cur ? `Applying ${Math.min(a.done + 1, a.total)} of ${a.total} · ${short(cur.date)} · ${label.replace("⏳ ", "")}${pct != null ? ` ${Math.round(pct * 100)}%` : ""}` : "Starting…")
+      : `Finished: ${rows.filter((x) => x.apply_stage === "done").length} applied${rows.some((x) => x.apply_stage === "failed") ? `, ${rows.filter((x) => x.apply_stage === "failed").length} failed` : ""}`;
+    const w = { waiting: 0, encoding: 0.1 + 0.6 * ((cur && cur.encode_progress) || 0), wordpress: 0.8, voice: 0.95 };
+    $("#aCounts").textContent = `${a.done} / ${a.total}`;
+    $("#aProg").value = a.total ? (a.done + (running && cur ? (w[cur.apply_stage] || 0) : 0)) / a.total : 1;
+    $("#aHint").hidden = !running;
+  }
+  $("#aTable tbody").innerHTML = rows.map((x) => {
+    const [cls, label, pct] = applyStageText(x);
+    const res = x.applied ? (x.applied.ok ? x.applied.done.join(" · ") : x.applied.error) : "";
+    return `<tr><td><b>${short(x.date)}</b><div class="note">${esc(x.post?.title || x.cut?.title || x.name)}</div></td>
+      <td><span class="pill ${cls}">${label}</span>${pct != null ? ` <span class="bar"><i style="width:${Math.round(pct * 100)}%"></i></span> ${Math.round(pct * 100)}%` : ""}</td>
+      <td class="note ${x.apply_stage === "failed" ? "bad" : ""}">${esc(res)}</td></tr>`;
+  }).join("");
+  // the Apply buttons only appear while there's something left to apply
+  const pending = pendingApply(), failed = pending.filter((x) => x.applied && !x.applied.ok).length;
+  const show = !running && pending.length > 0;
+  $("#aApply").hidden = $("#aNasOnly").hidden = !show;
+  $("#aApply").textContent = !a ? "Apply changes" : failed === pending.length ? `Retry the ${failed} that failed` : `Apply ${pending.length} more`;
+  $("#aNasOnly").hidden = !show || !!a;
+  $("#aDone").textContent = a && !running && !pending.length ? "✓ Everything you approved has been applied." : "";
+  $("#aNew").hidden = !(B.state.status === "done" && !running);
+  $("#aPlan").closest(".card").hidden = !!a && !pending.length;
+  if (!!a && !pending.length) $("#aSpeakersCard").hidden = true;
 }
 async function doApply(nasOnly) {
   if (!confirm(nasOnly ? "Save the approved MP3s (and slides) to the NAS now? WordPress won't be touched." : "Apply the changes listed above?")) return;

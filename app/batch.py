@@ -300,9 +300,10 @@ def build_cut(job, post, span):
     return {
         "start": span["start"], "end": span["end"],
         "title": post.get("title") or sug.get("title") or f"Sermon {job['date']}",
-        # recognized voice > the speaker WordPress already has > a guess from the transcript
+        # recognized voice > the speaker WordPress already has > default preacher / transcript guess
         "speaker": (sug.get("speaker") if sug.get("speaker_source") == "voice" else None)
-                   or post.get("speaker") or sug.get("speaker") or meta.get("default_speaker", ""),
+                   or post.get("speaker") or sug.get("speaker") or config.DEFAULT_PREACHER
+                   or meta.get("default_speaker", ""),
         "series": str(series_id or ""), "series_name": series_name,
         "scripture": sug.get("scripture", ""), "description": sug.get("description", ""),
         "date": job["date"], "bitrate": config.MP3_BITRATE, "normalize": True,
@@ -351,8 +352,10 @@ def view():
     items = []
     for i, it in enumerate(st["items"]):
         x = {k: it.get(k) for k in ("date", "name", "virtual", "duration", "mp3", "post", "job", "state", "error",
-                                    "flags", "approved", "hand", "ai", "diff", "applied", "edited")}
+                                    "flags", "approved", "hand", "ai", "diff", "applied", "edited", "apply_stage")}
         x["i"] = i
+        if not x.get("apply_stage") and it.get("applied"):  # applied before stages were recorded
+            x["apply_stage"] = "done" if it["applied"].get("ok") else "failed"
         j = jobs.get(it["job"]) if it.get("job") else None
         if j:
             s = j.get("suggest") or {}
@@ -360,6 +363,8 @@ def view():
             x["cut"], x["cover"] = j.get("cut"), j.get("cover")
             x["speaker_source"], x["speaker_detail"] = s.get("speaker_source"), s.get("speaker_detail")
             x["suggest_speaker"] = s.get("speaker")
+            x["encode_progress"], x["encoding"] = j.get("encode_progress"), j.get("encoding")
+            x["archive_status"] = (j.get("archive") or {}).get("status")
         items.append(x)
     out["items"] = items
     return out
@@ -399,11 +404,11 @@ def approve(indices, value=True):
 # --- apply ----------------------------------------------------------------------------------
 def plan():
     st, o = state(), state()["options"]
-    ok = [it for it in st["items"] if it["state"] == "done" and it.get("approved")]
+    ok = [it for it in st["items"] if it["state"] == "done" and it.get("approved") and not (it.get("applied") or {}).get("ok")]
     speaker_changes, desc, drafts, mp3s, slides, kept = [], 0, 0, 0, 0, 0
     learn = {}
     for it in ok:
-        job = jobs.get(it["job"]) or {}
+        job = (jobs.get(it["job"]) if it.get("job") else None) or {}
         cut, post = job.get("cut") or {}, it.get("post") or {}
         if o["nas_mp3"] and not (it.get("mp3") and o["existing"] == "skip"):
             mp3s += 1
@@ -442,10 +447,14 @@ def _apply(nas_only):
     st, o = state(), state()["options"]
     todo = [i for i, it in enumerate(st["items"]) if it["state"] == "done" and it.get("approved")
             and not (it.get("applied") or {}).get("ok")]  # failed ones can be retried
-    _set(apply={"status": "running", "done": 0, "total": len(todo), "log": [], "nas_only": nas_only})
+    for i in todo:
+        _item(i, apply_stage="waiting", applied=None)
+    _set(apply={"status": "running", "done": 0, "total": len(todo), "log": [], "nas_only": nas_only, "current": None})
     say = lambda m: (state()["apply"]["log"].append(m), save(state()))
+    stage = lambda i, s: _item(i, apply_stage=s)
     for n, i in enumerate(todo):
         it = st["items"][i]
+        state()["apply"]["current"] = i
         job = jobs.get(it["job"])
         cut, post = job["cut"], it.get("post") or {}
         done = []
@@ -458,12 +467,14 @@ def _apply(nas_only):
                     old.rename(old.with_name(old.stem + ".original.mp3"))
             jobs.update(job, archive={**job["archive"], "status": "saved", "folder": it["virtual"].rsplit("/", 1)[0],
                                       "files": {"recording": False, "slide": bool(o["nas_slide"]), "mp3": bool(want_mp3)}})
+            stage(i, "encoding")
             if not actions["encode"](job):
                 raise RuntimeError(job.get("message"))
             done.append("MP3 made")
             if job["archive"].get("message", "").startswith("Saved"):
                 done.append(job["archive"]["message"].replace("Saved", "NAS:"))
-            if not nas_only and wp.configured:
+            if not nas_only and wp.configured and (post or o["wp_drafts"]):
+                stage(i, "wordpress")
                 if post:
                     changes = {}
                     if o["wp_speaker"] and cut.get("speaker") and cut["speaker"] != post.get("speaker"):
@@ -479,17 +490,19 @@ def _apply(nas_only):
                     res = actions["publish"](job, "draft")
                     done.append(f"draft created (post {res['id']})" if res else f"draft failed: {job.get('message')}")
             if o["teach"] and job.get("voice") and cut.get("speaker"):
+                stage(i, "voice")
                 voice.learn(cut["speaker"], job["voice"]["vec"], job["id"])
                 done.append(f"voice learned ({cut['speaker']})")
             if o.get("free_space") and job.get("output"):
                 Path(job["output"]["path"]).unlink(missing_ok=True)  # the NAS has it now
-            _item(i, applied={"ok": True, "done": done})
+            _item(i, applied={"ok": True, "done": done}, apply_stage="done")
             say(f"✓ {it['date']}: " + "; ".join(done))
         except Exception as e:
             log.exception("batch apply %s", it["name"])
-            _item(i, applied={"ok": False, "error": str(e)})
+            _item(i, applied={"ok": False, "error": str(e)}, apply_stage="failed")
             say(f"✗ {it['date']}: {e}")
         state()["apply"]["done"] = n + 1
         save(state())
     state()["apply"]["status"] = "done"
+    state()["apply"]["current"] = None
     save(state())
