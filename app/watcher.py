@@ -76,7 +76,7 @@ def scan(root: Path, pending: dict, on_new):
             log.exception("watch: handling %s failed", p)
 
 
-status = {"last_scan": None, "last_error": None, "last_found": None, "pending": 0}
+status = {"last_scan": None, "last_error": None, "last_found": _load().get("last_found"), "pending": 0}
 _wake = threading.Event()
 
 
@@ -121,6 +121,10 @@ def start(root_fn, on_new):
                     status.update(last_scan=time.time(), last_error=None, pending=len(pending))
                     if found:
                         status["last_found"] = {"path": str(found[-1]), "at": time.time()}
+                        with _lock:  # remember it across restarts
+                            st = _load()
+                            st["last_found"] = status["last_found"]
+                            _save(st)
                 except Exception as e:
                     log.exception("watch: scan failed")
                     status.update(last_scan=time.time(), last_error=str(e))

@@ -1,5 +1,6 @@
 import json
 import logging
+import logging.handlers
 import os
 import re
 import shutil
@@ -19,6 +20,12 @@ from . import settings as store
 from .wordpress import DraftGone, WPError, wp
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+# keep a log on disk too: `docker logs` is lost whenever the container is re-created
+(config.DATA / "logs").mkdir(exist_ok=True)
+_fh = logging.handlers.RotatingFileHandler(config.DATA / "logs" / "sermon-studio.log", maxBytes=2_000_000, backupCount=3)
+_fh.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
+logging.getLogger().addHandler(_fh)
+log = logging.getLogger("sermon")
 logging.getLogger("discord").setLevel(logging.WARNING)
 logging.getLogger("discord.client").setLevel(logging.ERROR)  # "voice will NOT be supported": we don't use voice
 app = FastAPI(title="Sermon Studio")
@@ -571,15 +578,23 @@ def _auto_cut(job):
 
 def _on_new_recording(path: Path):
     job = jobs.create(path, virtual_of(path))
+    log.info("new recording %s -> job %s", path, job["id"])
     if job.get("published"):
         return
     jobs.update(job, auto=True)
-    _detect_archived(job)
+    try:  # each step on its own, so a hiccup in one can't skip the Discord message
+        _detect_archived(job)
+    except Exception:
+        log.exception("job %s: couldn't work out its NAS folder", job["id"])
     if discord_bot.enabled():
-        mins = audio.duration(path) / 60
+        try:
+            mins = audio.duration(path) / 60
+        except Exception:
+            mins = 70
         on_gpu = transcribe.model_info()["device"] == "cuda"
         est = round(mins * 0.03 + 2) if on_gpu else round(mins * 0.25 + 12)
         discord_bot.notify_analyzing(job, virtual_of(path.parent), est)
+        log.info("job %s: sent the 'analyzing' message", job["id"])
 
 
 def _on_job_event(job, event):
@@ -588,6 +603,11 @@ def _on_job_event(job, event):
     if event == "error":
         discord_bot.notify_error(job)
         return
+    if job.get("auto") and job["archive"]["status"] == "none":
+        try:
+            _detect_archived(job)  # second chance if it failed when the recording was found
+        except Exception:
+            log.exception("job %s: couldn't work out its NAS folder", job["id"])
     cut = job.get("cut") or _auto_cut(job)
     jobs.update(job, cut=cut)
     work, src = jobs.workdir(job["id"]), Path(job["source"])
