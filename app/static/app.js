@@ -63,7 +63,7 @@ $$("[data-go]").forEach((b) => b.onclick = () => go(+b.dataset.go));
 
 function ensurePolling() {
   const busy = job && (!["ready", "error", "cancelled"].includes(job.status) || job.encoding || job.publishing || job.describing
-    || job.archive?.status === "saving");  // (NAS copies show in step 4)
+    || job.archive?.status === "saving" || job.guide?.status === "working");  // (NAS copies show in step 4)
   if (busy && !poll) poll = setInterval(refresh, 1500);
   if (!busy && poll) { clearInterval(poll); poll = null; }
 }
@@ -405,6 +405,7 @@ async function loadMeta(selected) {
 }
 
 function renderReviewState() {
+  renderGuideState();
   $("#coverImg").hidden = !job.cover; $("#noCover").hidden = !!job.cover;
   if (job.cover && !$("#coverImg").src.includes(job.id)) $("#coverImg").src = `/api/jobs/${job.id}/cover.jpg?${Date.now()}`;
   $("#rewrite").disabled = !!job.describing || !status.llm;
@@ -508,6 +509,54 @@ $("#toPublish").onclick = async () => {
     job.encoding = true; job.cut = body; job.output = job.output || null;
     go(4);
   } catch (e) { alert(e.message); }
+};
+
+// ---- Life Group discussion guide (step 3)
+let guideShownFor = null, guideAt = null;
+async function loadGuide() {
+  const g = await api(`/api/jobs/${job.id}/guide`);
+  guideShownFor = job.id; guideAt = g.state?.at || null;
+  const prev = $("#guidePreview");
+  prev.hidden = !g.guide;
+  if (g.guide) {
+    const m = g.guide.meta || {};
+    prev.innerHTML = g.html + `<p class="hint">Written ${new Date(m.at * 1000).toLocaleString()} in ${Math.round(m.seconds)} s by ${esc(m.model)}`
+      + (m.examples ? `, modeled on ${m.examples} of your guides` : ", generic format (no example guides set in Settings)")
+      + `. Check the leader notes against the sermon before you use it.</p>`;
+    $("#guideDocx").href = `/api/jobs/${job.id}/guide.docx?${m.at}`;
+    $("#guideDocx").download = g.filename;
+  }
+  $("#guideDocx").hidden = !g.guide;
+  $("#guideNas").hidden = !g.guide || !g.nas_folder;
+  $("#guideNas").title = g.nas_folder ? `Copy the Word file to ${g.nas_folder}` : "";
+  $("#guideNas").textContent = g.nas?.name ? "Save to the NAS again" : "Save to the NAS folder";
+  $("#guideDiscord").hidden = !g.guide || !g.discord;
+  $("#guideMake").textContent = g.guide ? "↻ Write it again" : "✨ Write the guide";
+  renderGuideState(g.state);
+}
+function renderGuideState(st) {
+  st = st || job.guide || {};
+  const working = st.status === "working";
+  $("#guideMake").disabled = working || !status.llm;
+  $("#guideMsg").textContent = working ? `⏳ ${st.message || "Writing…"}` : st.error ? `⚠ ${st.message}` : !status.llm ? "Needs the local AI (LLM_MODEL)." : "";
+  // reload the preview when a new version is finished
+  if (guideShownFor !== job.id || (!working && st.status === "ready" && st.at && st.at !== guideAt)) loadGuide();
+}
+$("#guideMake").onclick = async () => {
+  if (!$("#guidePreview").hidden && !confirm("Write a new guide? It replaces the one below (the previous version is kept on the server).")) return;
+  try {
+    const g = await api(`/api/jobs/${job.id}/guide`, { method: "POST", body: cutBody() });
+    job.guide = g.state; renderGuideState(); ensurePolling();
+  } catch (e) { alert(e.message); }
+};
+$("#guideNas").onclick = async () => {
+  try { const r = await api(`/api/jobs/${job.id}/guide/nas`, { method: "POST" }); $("#guideMsg").textContent = `Saved ${r.name} in ${r.folder}`; }
+  catch (e) { alert(e.message); }
+};
+$("#guideDiscord").onclick = async () => {
+  $("#guideMsg").textContent = "Sending…";
+  try { await api(`/api/jobs/${job.id}/guide/discord`, { method: "POST" }); $("#guideMsg").textContent = "Sent to Discord."; }
+  catch (e) { $("#guideMsg").textContent = ""; alert(e.message); }
 };
 
 // ======================================================================== step 4: publish
@@ -658,6 +707,8 @@ function renderConfig(fillForms) {
   $("#cfgPublicUrl").value = v.PUBLIC_URL || "";
   $("#cfgPublicUrl2").value = v.PUBLIC_URL_REMOTE || "";
   fillPreachers(v.DEFAULT_PREACHER || "");
+  $("#cfgGuideFolder").textContent = v.GUIDE_EXAMPLES_PATH || "(none: generic format)";
+  $("#cfgGuideDiscord").checked = !!v.GUIDE_DISCORD;
 }
 async function fillPreachers(current) {
   const sel = $("#cfgDefaultPreacher");
@@ -704,6 +755,19 @@ async function runTest(card, url, save) {
 }
 $("#testWordpress").onclick = () => runTest("cardWordpress", "/api/config/test/wordpress", saveWordpress);
 $("#testDiscord").onclick = () => runTest("cardDiscord", "/api/config/test/discord", saveDiscord);
+
+const guideFolderValue = () => $("#cfgGuideFolder").textContent.startsWith("(") ? "" : $("#cfgGuideFolder").textContent;
+$("#saveGuide").onclick = () => saveValues("cardGuide", { GUIDE_EXAMPLES_PATH: guideFolderValue(), GUIDE_DISCORD: $("#cfgGuideDiscord").checked ? "true" : "false" });
+$("#pickGuideFolder").onclick = () => {
+  const box = $("#guidePicker"); box.hidden = !box.hidden;
+  if (!box.hidden) browse(box, cfg.values.GUIDE_EXAMPLES_PATH || "", "dir", () => {}).catch(() => browse(box, "", "dir", () => {}));
+};
+$("#useGuideFolder").onclick = () => {
+  const p = $("#guidePicker").dataset.path;
+  if (!p) return alert("Open one of the folders first.");
+  $("#cfgGuideFolder").textContent = p; $("#guidePicker").hidden = true;
+};
+$("#clearGuideFolder").onclick = () => $("#cfgGuideFolder").textContent = "(none: generic format)";
 
 $("#pickArchive").onclick = () => {
   const box = $("#archivePicker"); box.hidden = !box.hidden;

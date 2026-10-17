@@ -142,6 +142,8 @@ The header of the page shows which model and device are in use (for example `AI:
 | `BROWSE_ROOTS` | `NAS=/media/nas,Local=/media/local,Uploads=/data/uploads` | Named folders the file browser can open |
 | `START_PATH` | `NAS` | Folder the NAS picker opens at |
 | `ARCHIVE_ROOT` | `NAS` | Archive folder for recordings and MP3s; the app suggests `YYYY/MM - Month/YYYY_MM_DD` under it |
+| `GUIDE_EXAMPLES_PATH` | — | Folder (e.g. `NAS/Documents/Life Group`) with some of your own past discussion guides (`.docx`, `.md`, `.txt`). The newest two are given to the AI as examples of your format and tone. Blank = a generic built-in format. Also in Settings. |
+| `GUIDE_DISCORD` | `false` | When a sermon is published (not in a batch), also write its Life Group guide and post the Word file on Discord. Also in Settings. |
 
 To set the login without the password landing in your shell history, save this as `set-wp-login.sh` and run `bash set-wp-login.sh`. Run it as a file rather than pasting it, because a pasted `read` takes the next pasted line as its answer:
 
@@ -264,6 +266,16 @@ Re-run past service recordings (for example the whole archive once a GPU is inst
 
 Your hand-made MP3s double as an accuracy check: the review shows the typical difference between the AI's cut and yours. On a two-service test both starts matched to within a second and both ends within 2 s.
 
+## Life Group discussion guides
+
+The **📖 Life Group discussion guide** card at the bottom of the Review step writes a discussion guide for a small group that meets during the week to talk about the sermon: a header (title, passage, series, date), then 7–9 numbered questions in the order of the sermon (an easy opener, the passage and the preacher's main points, how it points to Jesus, application), each with lettered leader notes (the answer as the sermon gave it, with verse references). It uses the sermon's cut and the details on the Review form (title, speaker, scripture, series, date), so fix those first.
+
+- **How:** two passes with the local LLM. First it reads the sermon transcript in ~2,000-word chunks and takes notes of the points, verses, stories, memorable lines and applications the preacher actually used. Then it writes the guide from those notes, which keeps it grounded in the sermon and inside a 7B model's context. **↻ Write it again** gives a different version (the previous one is kept as `guide.prev.json`).
+- **Your format:** set **Settings → Life Group guides → Example guides folder** (or `GUIDE_EXAMPLES_PATH`) to a folder of guides you've written. The newest two (by the date at the start of the file name, else the file date) are read each time a guide is written and shown to the AI as examples of format, tone and length. Their content isn't copied, and the app never stores or uploads them. Without examples it uses a generic format.
+- **Output:** a preview in the card, **⬇ Download Word file** (Times New Roman 12, numbered questions with the leader notes lettered in red underneath, easy to edit), and Markdown at `/api/jobs/{id}/guide.md`. Everything is saved in `data/guides/<job-id>/` and survives deleting the sermon from the app.
+- **NAS / Discord:** **Save to the NAS folder** copies the Word file next to the sermon's recording and MP3 (never overwriting a file the app didn't write). **Send to Discord** posts it in the bot's channel. With **When a sermon is published, also write its guide and post it on Discord** switched on, that happens on its own after publishing.
+- About a minute on a GPU. Always read it through before the group meets: it's a draft from an automatic transcript.
+
 ## API
 
 | Method | Path | |
@@ -291,6 +303,9 @@ Your hand-made MP3s double as an accuracy check: the review shows the typical di
 | POST | `/api/config/test/wordpress` · `/api/config/test/discord` | test the login · send a Discord test message |
 | POST | `/api/jobs/{id}/notify` `{on}` | Discord message when this analysis is done |
 | POST | `/api/settings/watch` `{enabled, catch_up}` · `/api/settings/watch/scan` | turn monitoring on/off · check the NAS now |
+| GET / POST | `/api/jobs/{id}/guide` (POST body: `{title, speaker, scripture, series_name, date, start, end}`, all optional) | the Life Group guide (state, preview HTML/Markdown) · write it (again) in the background |
+| GET | `/api/jobs/{id}/guide.docx` · `/api/jobs/{id}/guide.md` | the guide as a Word file · as Markdown |
+| POST | `/api/jobs/{id}/guide/nas` · `/api/jobs/{id}/guide/discord` | copy the Word file to the sermon's NAS folder · post it on Discord |
 
 ## Project layout
 
@@ -305,6 +320,7 @@ app/
   wordpress.py    wp-admin client: series/speaker sync, media upload, podcast form
   voice.py        voiceprints: find the sermon by the preacher's voice, recognize who preached
   batch.py        batch processing of past recordings (scan, run, review, apply)
+  guide.py        Life Group discussion guide: notes from the transcript, questions, Word/Markdown output
   watcher.py      polls the archive for new recordings
   settings.py     settings changed from the UI (data/settings.json)
   discord_bot.py  Discord notifications, approval buttons, slide upload

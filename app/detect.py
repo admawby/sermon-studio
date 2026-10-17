@@ -71,13 +71,15 @@ class Cancelled(Exception):
 should_stop = lambda: False  # set by jobs.py to the worker's cancel flag
 
 
-def _ollama(prompt, num_ctx=16384):
-    """POST /api/generate, but abortable: closing the socket makes Ollama stop generating."""
+def _ollama(prompt, num_ctx=16384, temperature=0, stop=None, options=None):
+    """POST /api/generate, but abortable: closing the socket makes Ollama stop generating.
+    stop: function that returns True to abort (default: the analysis worker's cancel flag)."""
+    stop = stop or should_stop
     u = urllib.parse.urlsplit(config.OLLAMA_URL)
     conn = http.client.HTTPConnection(u.hostname, u.port or 80, timeout=3600)
     conn.request("POST", "/api/generate", json.dumps({
         "model": config.LLM_MODEL, "prompt": prompt, "format": "json", "stream": False,
-        "options": {"temperature": 0, "num_ctx": num_ctx},
+        "options": {"temperature": temperature, "num_ctx": num_ctx, **(options or {})},
     }), {"Content-Type": "application/json"})
     box = {}
 
@@ -92,7 +94,7 @@ def _ollama(prompt, num_ctx=16384):
     t.start()
     while t.is_alive():
         t.join(0.5)
-        if should_stop():
+        if stop():
             try:
                 conn.sock.shutdown(socket.SHUT_RDWR)
             except Exception:

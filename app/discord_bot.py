@@ -180,6 +180,15 @@ def notify_text(text):
     _call(go())
 
 
+def notify_file(text, path, filename=None):
+    """A message with a file attached (e.g. the Life Group guide). Returns True if it was sent."""
+    async def go():
+        import discord
+        await (await _channel()).send(text, file=discord.File(str(path), filename=filename or Path(path).name))
+        return True
+    return bool(_call(go()))
+
+
 def notify_error(job):
     async def go():
         ch = await _channel()

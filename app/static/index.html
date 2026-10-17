@@ -206,6 +206,19 @@
     <div class="actions cardActions"><button id="savePreacher">Save</button><span class="hint msg"></span></div>
   </section>
 
+  <section class="card cfg settingsOnly" id="cardGuide">
+    <h3>📖 Life Group guides</h3>
+    <p class="hint">The Review step can write a discussion guide for each sermon. Point this at a folder with a few of your own past guides (Word, .md or .txt) and the newest two are used as examples of your format and tone. They're read when a guide is written and never copied anywhere. Leave it empty for a generic format.</p>
+    <label class="wide">Example guides folder
+      <span class="folderRow"><code id="cfgGuideFolder">(none: generic format)</code><button class="secondary small" id="pickGuideFolder">Choose…</button><button class="secondary small" id="clearGuideFolder">Clear</button></span></label>
+    <div id="guidePicker" class="picker" hidden>
+      <div class="row"><nav class="crumbs"></nav><button class="small" id="useGuideFolder">Use this folder</button></div>
+      <ul class="files"></ul>
+    </div>
+    <label class="check"><input type="checkbox" id="cfgGuideDiscord"> When a sermon is published, also write its guide and post the Word file on Discord</label>
+    <div class="actions cardActions"><button id="saveGuide">Save</button><span class="hint msg"></span></div>
+  </section>
+
   <section class="card cfg" id="cardDiscord" data-title="Discord">
     <h3>Discord bot <small class="hint">(optional)</small></h3>
     <p class="hint">The bot posts when a sermon is ready, with clips of where it starts and ends, and lets you publish
@@ -419,6 +432,18 @@
           <label class="check"><input id="normalize" type="checkbox" checked> Even out the volume (−16 LUFS)</label>
         </div>
       </details>
+    </div>
+    <div class="card" id="guideCard">
+      <h3>📖 Life Group discussion guide</h3>
+      <p class="hint" id="guideHint">Questions for the small group, with leader notes, written by the local AI from this sermon's transcript and the details above. Takes a minute or two.</p>
+      <div class="actions">
+        <button class="secondary" id="guideMake">✨ Write the guide</button>
+        <a class="button secondary" id="guideDocx" hidden>⬇ Download Word file</a>
+        <button class="secondary small" id="guideNas" hidden>Save to the NAS folder</button>
+        <button class="secondary small" id="guideDiscord" hidden>Send to Discord</button>
+        <span class="hint" id="guideMsg"></span>
+      </div>
+      <div id="guidePreview" class="guide" hidden></div>
     </div>
     <footer class="nav">
       <button class="secondary" data-go="2">← Back</button>

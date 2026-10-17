@@ -304,3 +304,12 @@ html, body { max-width: 100%; overflow-x: hidden; }
   .summary { gap: .8rem 1.2rem; }
   .toolbar > * { max-width: 100%; }
 }
+
+/* Life Group guide preview */
+.guide { margin-top: 12px; padding: 14px 18px; border: 1px solid var(--line, #ddd); border-radius: 8px; background: #fff;
+  color: #111; font-family: "Times New Roman", Times, serif; font-size: 16px; line-height: 1.45; max-height: 70vh; overflow: auto; }
+.guide .gHead { margin-bottom: 12px; }
+.guide ol.gQs { padding-left: 1.6em; margin: 0; }
+.guide ol.gQs > li { margin: 8px 0 4px; }
+.guide ol.gNotes { color: #d00; margin: 2px 0 8px; padding-left: 1.6em; }
+.guide .hint { font-family: system-ui, sans-serif; font-size: 13px; }

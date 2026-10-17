@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import archive, audio, batch, config, discord_bot, jobs, transcribe, voice, watcher
+from . import archive, audio, batch, config, discord_bot, guide, jobs, transcribe, voice, watcher
 from . import settings as store
 from .wordpress import DraftGone, WPError, wp
 
@@ -586,10 +586,178 @@ def do_publish(job, status):
         _meta_cache["at"] = 0  # the new post is now the "last edited" one
         jobs.update(job, publishing=False, published=res,
                     message="Published" if res["status"] == "publish" else "Saved as draft")
+        if res["status"] == "publish" and not job.get("batch"):
+            _guide_on_publish(job)
         return res
     except Exception as e:
         jobs.update(job, publishing=False, message=f"Upload failed: {e}")
         return None
+
+
+# --- Life Group discussion guide ---------------------------------------------------------------
+def _guide_examples():
+    if not config.GUIDE_EXAMPLES_PATH:
+        return []
+    try:
+        return guide.examples(resolve(config.GUIDE_EXAMPLES_PATH))
+    except HTTPException:
+        log.warning("guide: examples folder %s not found", config.GUIDE_EXAMPLES_PATH)
+        return []
+
+
+def _guide_info(job, body=None):
+    """The sermon details for the guide: what's on the Review form (body), else the saved cut, else
+    what the analysis suggested."""
+    c, sug, prop = job.get("cut") or {}, job.get("suggest") or {}, job.get("proposal") or {}
+    b = {k: v for k, v in (body or {}).items() if v not in (None, "")}
+    pick = lambda k, *alts: b.get(k) or c.get(k) or next((a for a in alts if a), "")
+    return {"title": pick("title", sug.get("title")), "speaker": pick("speaker", sug.get("speaker")),
+            "scripture": pick("scripture", sug.get("scripture")), "date": pick("date", job.get("date")),
+            "series": b.get("series_name") or c.get("series_name") or "",
+            "start": float(b.get("start", c.get("start", prop.get("start", 0)))),
+            "end": float(b.get("end", c.get("end", prop.get("end", 1e9)))),
+            "examples": _guide_examples()}
+
+
+def _guide_view(job):
+    g, st = guide.load(job["id"]), dict(job.get("guide") or {})
+    if st.get("status") == "working" and not guide.running(job["id"]):  # interrupted by a restart
+        st = {"status": "ready" if g else "error", "message": "Interrupted by a restart; write it again."}
+    out = {"state": st or {"status": "none"}, "examples_folder": config.GUIDE_EXAMPLES_PATH or None,
+           "nas_folder": _guide_nas_folder(job), "discord": discord_bot.enabled()}
+    if g:
+        out.update(guide={k: g[k] for k in ("title", "scripture", "series", "speaker", "date", "big_idea",
+                                            "main_points", "questions", "meta")},
+                   markdown=guide.markdown(g), html=guide.to_html(g), filename=guide.filename(g),
+                   nas=(job.get("guide_nas") or {}))
+    return out
+
+
+class GuideBody(BaseModel):
+    title: str = ""
+    speaker: str = ""
+    scripture: str = ""
+    series_name: str = ""
+    date: str = ""
+    start: float | None = None
+    end: float | None = None
+
+
+def _start_guide(job, body=None, done=None):
+    if job["status"] != "ready":
+        raise HTTPException(400, "The analysis isn't finished")
+    segs = jobs.transcript(job["id"])
+    if not segs:
+        raise HTTPException(400, "This sermon has no transcript")
+    if not config.LLM_MODEL:
+        raise HTTPException(400, "No AI model is set up (LLM_MODEL)")
+    try:
+        guide.start(job, segs, _guide_info(job, body), jobs.update, done)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+
+
+@app.get("/api/jobs/{jid}/guide")
+def guide_get(jid: str):
+    return _guide_view(must_job(jid))
+
+
+@app.post("/api/jobs/{jid}/guide")
+def guide_make(jid: str, body: GuideBody):
+    job = must_job(jid)
+    _start_guide(job, body.model_dump())
+    return _guide_view(job)
+
+
+@app.get("/api/jobs/{jid}/guide.docx")
+def guide_docx(jid: str):
+    must_job(jid)
+    g, p = guide.load(jid), guide.docx_path(jid)
+    if not g or not p.exists():
+        raise HTTPException(404, "No guide yet")
+    return FileResponse(p, filename=guide.filename(g), headers={"Cache-Control": "no-cache"},
+                        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+
+
+@app.get("/api/jobs/{jid}/guide.md")
+def guide_md(jid: str):
+    must_job(jid)
+    g = guide.load(jid)
+    if not g:
+        raise HTTPException(404, "No guide yet")
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(guide.markdown(g), media_type="text/markdown; charset=utf-8")
+
+
+def _guide_nas_folder(job):
+    """The sermon's NAS folder (where its recording/MP3 are archived), or None."""
+    a = job.get("archive") or {}
+    if a.get("status") == "saved" and a.get("folder"):
+        return a["folder"]
+    try:
+        src = Path(job["source"])
+        if resolve(config.ARCHIVE_ROOT) in src.parents:
+            return virtual_of(src.parent)
+    except HTTPException:
+        pass
+    return None
+
+
+@app.post("/api/jobs/{jid}/guide/nas")
+def guide_to_nas(jid: str):
+    """Copy the Word file next to the sermon's recording/MP3. Like the other archive copies, it never
+    overwrites a file the app didn't write (it picks "name (2).docx" instead)."""
+    job = must_job(jid)
+    g, p, virt = guide.load(jid), guide.docx_path(jid), _guide_nas_folder(job)
+    if not g or not p.exists():
+        raise HTTPException(404, "No guide yet")
+    if not virt:
+        raise HTTPException(400, "This sermon isn't saved on the NAS")
+    with _archive_lock:
+        a = job["archive"]
+        ours = set(a.get("written", []))
+        try:
+            dest = archive.copy_into(p, resolve(virt, must_exist=False), ours, name=guide.filename(g))
+        except OSError as e:
+            raise HTTPException(502, f"Couldn't save to the NAS: {e}")
+        jobs.update(job, archive={**job["archive"], "written": sorted(ours | {dest.name})},
+                    guide_nas={"folder": virt, "name": dest.name, "at": time.time()})
+    return {"ok": True, "folder": virt, "name": dest.name}
+
+
+def _guide_to_discord(job, g):
+    text = (f"📖 **Life Group guide** for “{g.get('title') or job['date']}”"
+            + (f" ({g['scripture']})" if g.get("scripture") else "") + f": {len(g['questions'])} questions.")
+    return discord_bot.notify_file(text, guide.docx_path(job["id"]), guide.filename(g))
+
+
+@app.post("/api/jobs/{jid}/guide/discord")
+def guide_discord(jid: str):
+    job = must_job(jid)
+    g = guide.load(jid)
+    if not g:
+        raise HTTPException(404, "No guide yet")
+    if not discord_bot.enabled():
+        raise HTTPException(400, "Set up the Discord bot in Settings first")
+    if not _guide_to_discord(job, g):
+        raise HTTPException(502, "Discord didn't accept the message; see data/logs/sermon-studio.log")
+    return {"ok": True}
+
+
+def _guide_on_publish(job):
+    """Settings → "Post the guide on Discord when a sermon is published": write it (unless there's one
+    already) and send the Word file."""
+    if not (config.GUIDE_DISCORD and discord_bot.enabled() and config.LLM_MODEL):
+        return
+    send = lambda j, g: _guide_to_discord(j, g)
+    g = guide.load(job["id"])
+    if g:
+        threading.Thread(target=send, args=(job, g), daemon=True).start()
+        return
+    try:
+        _start_guide(job, None, done=send)
+    except HTTPException as e:
+        log.warning("guide on publish for %s: %s", job["id"], e.detail)
 
 
 # --- Batch tab ---------------------------------------------------------------------------------
@@ -814,6 +982,11 @@ jobs.listeners.append(batch.on_job_event)
 batch.actions.update(save_cover=_save_cover, encode=do_encode, publish=do_publish, meta=lambda: wp_meta(),
                      notify=lambda text: discord_bot.notify_text(text) if discord_bot.enabled() else None)
 batch.resume_after_restart()
+for _j in jobs.recent(10_000):  # a guide being written when the container stopped
+    _job = jobs.get(_j["id"])
+    if _job and (_job.get("guide") or {}).get("status") == "working":
+        jobs.update(_job, guide={"status": "ready" if guide.load(_job["id"]) else "error",
+                                 "message": "Interrupted by a restart; write it again.", "error": "interrupted"})
 jobs.people_list = lambda: (wp_meta().get("speakers") or []) if wp.configured else []
 threading.Thread(target=cleanup_uploads, daemon=True).start()
 discord_bot.start({
@@ -919,7 +1092,7 @@ def set_config(body: ConfigUpdate):
         if k in ("WP_URL", "PUBLIC_URL", "PUBLIC_URL_REMOTE") and v and not re.match(r"^https?://[^\s/]+", v):
             errors.append(f"{'WordPress address' if k == 'WP_URL' else 'App address'} should start with https:// or http://")
             continue
-        if k in ("ARCHIVE_ROOT", "START_PATH") and v:
+        if k in ("ARCHIVE_ROOT", "START_PATH", "GUIDE_EXAMPLES_PATH") and v:
             try:
                 if not resolve(v).is_dir():
                     raise HTTPException(400)

@@ -46,7 +46,14 @@ DISCORD_CHANNEL_ID = int(env("DISCORD_CHANNEL_ID", "0") or 0)
 PUBLIC_URL = env("PUBLIC_URL").rstrip("/")  # address on the home network
 PUBLIC_URL_REMOTE = env("PUBLIC_URL_REMOTE").rstrip("/")
 # used when the preacher's voice isn't recognized with confidence (one of the WordPress People)
-DEFAULT_PREACHER = env("DEFAULT_PREACHER")  # optional: address when away (e.g. Tailscale)
+DEFAULT_PREACHER = env("DEFAULT_PREACHER")
+
+# --- Life Group discussion guides ---
+# folder (e.g. NAS/Documents/Life Group) with a few of your own past guides (.docx/.md/.txt): the newest two
+# are shown to the AI as examples of your format and tone. Blank = a generic built-in format.
+GUIDE_EXAMPLES_PATH = env("GUIDE_EXAMPLES_PATH")
+# when a sermon is published, also write its guide and post the Word file in the Discord channel
+GUIDE_DISCORD = env("GUIDE_DISCORD", "false").lower() in ("1", "true", "yes", "on")
 
 # --- settings the web UI can change (Settings tab / first-run setup) ---------------------------
 # Stored in data/settings.json under "config"; they override the values from .env above.
@@ -54,7 +61,7 @@ EDITABLE = {
     "ARCHIVE_ROOT": str, "START_PATH": str, "FILE_PREFIX": str,
     "WP_URL": str, "WP_USER": str, "WP_PASSWORD": str,
     "DISCORD_TOKEN": str, "DISCORD_USER_ID": int, "DISCORD_CHANNEL_ID": int, "PUBLIC_URL": str,
-    "PUBLIC_URL_REMOTE": str, "DEFAULT_PREACHER": str,
+    "PUBLIC_URL_REMOTE": str, "DEFAULT_PREACHER": str, "GUIDE_EXAMPLES_PATH": str, "GUIDE_DISCORD": bool,
 }
 SECRET = {"WP_PASSWORD", "DISCORD_TOKEN"}
 _ENV = {k: globals()[k] for k in EDITABLE}
@@ -73,6 +80,8 @@ def apply():
         v = over.get(key, _ENV[key])
         if typ is int:
             v = int(v or 0)
+        elif typ is bool:
+            v = v if isinstance(v, bool) else str(v or "").strip().lower() in ("1", "true", "yes", "on")
         else:
             v = str(v or "").strip()
             if key in ("WP_URL", "PUBLIC_URL", "PUBLIC_URL_REMOTE"):
