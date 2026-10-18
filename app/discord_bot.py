@@ -256,7 +256,12 @@ async def _main():
 
     @_client.event
     async def on_message(msg):
-        if msg.author.bot or msg.author.id != config.DISCORD_USER_ID:
+        if msg.author.bot:
+            return
+        if msg.author.id != config.DISCORD_USER_ID:
+            if msg.attachments and (isinstance(msg.channel, discord.DMChannel) or msg.channel.id == config.DISCORD_CHANNEL_ID):
+                log.warning("discord: ignored an image from %s (%s); only the owner (%s) can send slides",
+                            msg.author, msg.author.id, config.DISCORD_USER_ID)
             return
         in_dm = isinstance(msg.channel, discord.DMChannel)
         if not (in_dm or msg.channel.id == config.DISCORD_CHANNEL_ID):

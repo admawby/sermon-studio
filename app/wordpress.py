@@ -200,7 +200,8 @@ class WordPress:
         link = re.search(r'id="sample-permalink"[^>]*>\s*<a href="([^"]+)"', page)
         return st.group(1), html.unescape(link.group(1)) if link else None
 
-    def update_post(self, post_id, people=None, content_if_empty=None, mp3: Path | None = None):
+    def update_post(self, post_id, people=None, content_if_empty=None, mp3: Path | None = None,
+                    image: Path | None = None):
         """Change an existing post in place (keeps its status, title and date). Returns what changed."""
         page = self.admin("GET", f"post.php?post={post_id}&action=edit").text
         if 'name="post_title"' not in page:
@@ -214,10 +215,15 @@ class WordPress:
         if content_if_empty and not re.sub(r"<[^>]+>|\s|&nbsp;", "", cur.get("content", "")):
             override["content"] = content_if_empty
             changed.append("description added")
+        nonce = re.search(r'"action":"upload-attachment","_wpnonce":"([0-9a-f]+)"', page)
+        if (mp3 or image) and not nonce:
+            raise WPError("Couldn't find the media upload token.")
+        if image:
+            img = self.upload_media(image, "image/jpeg", post_id, nonce.group(1),
+                                    name=mp3.stem + ".jpg" if mp3 else None)
+            override["_thumbnail_id"] = str(img["id"])
+            changed.append("slide set as the featured image")
         if mp3:
-            nonce = re.search(r'"action":"upload-attachment","_wpnonce":"([0-9a-f]+)"', page)
-            if not nonce:
-                raise WPError("Couldn't find the media upload token.")
             a = self.upload_media(mp3, "audio/mpeg", post_id, nonce.group(1))
             override[f"acf[{acf_key(page, 'podcast_audio')}]"] = str(a["id"])
             changed.append("audio replaced")
@@ -230,12 +236,14 @@ class WordPress:
         return changed
 
     # --- writing -------------------------------------------------------------
-    def upload_media(self, path: Path, mime: str, post_id: int, nonce: str):
+    def upload_media(self, path: Path, mime: str, post_id: int, nonce: str, name: str | None = None):
+        """name: the file name to give it in the media library (default: the file's own name)."""
+        name = name or path.name
         with path.open("rb") as f:
             r = self.admin("POST", "async-upload.php", timeout=1800,
                            data={"action": "upload-attachment", "_wpnonce": nonce, "post_id": str(post_id),
-                                 "name": path.name},
-                           files={"async-upload": (path.name, f, mime)})
+                                 "name": name},
+                           files={"async-upload": (name, f, mime)})
         try:
             res = r.json()
         except ValueError:
@@ -274,7 +282,8 @@ class WordPress:
             audio = self.upload_media(mp3, "audio/mpeg", post_id, nonce.group(1))
             if cover and cover.exists():
                 progress("Uploading cover image…")
-                image = self.upload_media(cover, "image/jpeg", post_id, nonce.group(1))
+                image = self.upload_media(cover, "image/jpeg", post_id, nonce.group(1),
+                                          name=f"{config.FILE_PREFIX}{fields['date'].replace('-', '')}.jpg")
 
         progress("Publishing…" if status == "publish" else "Saving the draft…")
         y, mo, d = fields["date"].split("-")

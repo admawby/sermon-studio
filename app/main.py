@@ -512,8 +512,11 @@ def wp_meta(fresh: bool = False):
         data = {"configured": True, **wp.meta()}
         _meta_cache.update(at=time.time(), data=data)
         return data
-    except WPError as e:
-        return {"configured": True, "series": [], "error": str(e)}
+    except Exception as e:  # incl. timeouts: fall back to the last list we got
+        log.warning("WordPress series/speaker list failed: %s", e)
+        if _meta_cache["data"]:
+            return {**_meta_cache["data"], "error": f"WordPress didn't answer; using the list from earlier ({e})"}
+        return {"configured": True, "series": [], "speakers": [], "error": str(e)}
 
 
 @app.get("/api/wp/discover")
@@ -921,12 +924,22 @@ def _on_job_event(job, event):
             _detect_archived(job)  # second chance if it failed when the recording was found
         except Exception:
             log.exception("job %s: couldn't work out its NAS folder", job["id"])
-    cut = job.get("cut") or _auto_cut(job)
+    try:
+        cut = job.get("cut") or _auto_cut(job)
+    except Exception:  # never let a slow WordPress stop the "ready" message
+        log.exception("job %s: couldn't build the proposed details", job["id"])
+        p, s = job["proposal"], job.get("suggest") or {}
+        cut = {"start": p["start"], "end": p["end"], "title": s.get("title") or f"Sermon {job['date']}",
+               "speaker": s.get("speaker") or config.DEFAULT_PREACHER, "series": "", "series_name": "",
+               "scripture": s.get("scripture", ""), "description": s.get("description", ""), "date": job["date"],
+               "bitrate": config.MP3_BITRATE, "normalize": True}
     jobs.update(job, cut=cut)
     work, src = jobs.workdir(job["id"]), Path(job["source"])
     clips = (audio.clip(src, work / "clip-start.mp3", cut["start"], 10),
              audio.clip(src, work / "clip-end.mp3", cut["end"] - 10, 10))
     discord_bot.notify_ready(job, cut, clips)
+    if not (jobs.get(job["id"]).get("discord") or {}).get("message"):
+        log.error("job %s: the 'sermon is ready' Discord message wasn't sent", job["id"])
 
 
 def _approve(jid, status):
@@ -1059,7 +1072,8 @@ def get_config():
     values = {}
     for k in config.EDITABLE:
         v = getattr(config, k)
-        values[k] = {"set": bool(v)} if k in config.SECRET else v
+        # numbers (Discord IDs) go out as text: they're longer than a browser can hold exactly as a number
+        values[k] = {"set": bool(v)} if k in config.SECRET else str(v) if isinstance(v, int) and v else v
     archive_ok = True
     try:
         resolve(config.ARCHIVE_ROOT)
