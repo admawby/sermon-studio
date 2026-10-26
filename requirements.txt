@@ -8,6 +8,7 @@ discord.py>=2.4
 sherpa-onnx>=1.10  # speaker embeddings (voice recognition)
 mutagen>=1.47
 python-docx>=1.1  # Life Group guides (.docx)
+wordcloud>=1.9  # Word Cloud tab
 # CUDA 12 runtime libs for ctranslate2 (unused on CPU, picked up automatically once a GPU is present)
 nvidia-cublas-cu12
 nvidia-cudnn-cu12==9.*

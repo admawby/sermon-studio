@@ -50,17 +50,33 @@ The preacher is the one person who talks continuously for 30+ minutes. Sermon St
 
 1. Speech is cut into ~3-second windows and each gets a **voiceprint** from a small speaker-recognition model (CAM++ trained on VoxCeleb, run locally with [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx); downloaded on first use, ~30 MB).
 2. The longest stretch of continuous speech is the sermon's core; the preacher's voice is learned from its middle.
-3. **Start** = the moment the voice changes most from "someone else" (scripture reader, announcements) to the preacher. **End** = where speech stops after the preacher's last words (the sermon is followed by music).
-4. **Start:** the preacher's greeting near that point ("good morning…", "open your Bibles…") followed by the preacher talking. If there isn't one, the local LLM reads the transcript around the edge, with every line marked *preacher's voice* or not, and picks the first sentence. It can move the start later, but only earlier if the stretch in between is continuous preacher speech. That way a scripture reader with a similar voice, or the pastor's announcements before the songs, don't get included. **End:** the LLM picks the last sentence (usually the closing "amen") within about a minute and a half.
+3. **Every transcript line near that region is a candidate start or end,** scored on several clues at once (`app/edges.py`):
+   * **Start:**
+     * the next 10 minutes are mostly the preacher (a scripture reading or prayer by someone with a similar voice lasts a few minutes; a sermon keeps going)
+     * the voice switches to the preacher here
+     * it's the *last* greeting / "open your Bibles" before he keeps talking (the reader greets first)
+     * an "amen" right before it (the children's prayer ends)
+     * a long pause before it (e.g. after a video)
+     * penalties: someone announcing a scripture reading ("we're going to read…"), or being far from the voice estimate
+   * **End:**
+     * the closing prayer's "amen", including one in the middle of a transcript line
+     * **a song starting**: the next 3 minutes repeat themselves (choruses), the previous 3 didn't
+     * the voice stopping
+     * a penalty for being far from the voice estimate
+4. **Where the sermon ends** is a setting (⚙ Settings → Default preacher card): after the closing prayer's "amen" (default) or at "Let's pray".
 
-Measured on five services whose correct cuts were known (located in the raw recording by audio cross-correlation):
+**How accurate it is.** The weights were tuned on **104 past services with hand-made cuts**. A comparison batch ran every recording through the app, and each hand-made MP3 was located in its recording by audio cross-correlation. Accuracy is from 5-fold cross-validation, i.e. measured on services the tuning didn't see:
 
-| | Start error | End error |
-|---|---|---|
-| Transcript + AI only (old method) | 2–7 min | up to ~1 min |
-| **Voice + AI** | **0–7 s** | **1–20 s** |
+| | Within 10 s | Within 30 s | Within 60 s | Off by > 5 min | Median |
+|---|---|---|---|---|---|
+| Start, previous method (greeting / AI) | 35% | 66% | 78% | 14 | 15 s |
+| **Start, now** | **61%** | **84%** | **91%** | **1** | **4 s** |
+| End, previous method | 67% | 76% | 81% | 5 | 1 s |
+| **End, now** | **92%** | **94%** | **94%** | **2** | **1 s** |
 
-A sixth service run end-to-end through the app, with voice profiles that had never heard it, came out at +4 s / +5 s and recognized the preacher.
+Ends are judged on the 63 hand cuts that end after the closing prayer, the current house style. Older cuts that stopped at "Let's pray" are left out.
+
+**Re-tuning as you go.** After a batch over past recordings with hand-made MP3s (all options off), run `docker exec -w /srv sermon-studio python -m app.tune_edges`. It reports current vs re-tuned accuracy on held-out services, and `--save` writes `data/edge_weights.json`, which the app then uses.
 
 ### Recognizing who preached
 
@@ -319,6 +335,8 @@ app/
   detect.py       sermon boundary detection (LLM + heuristic), title/scripture suggestion
   wordpress.py    wp-admin client: series/speaker sync, media upload, podcast form
   voice.py        voiceprints: find the sermon by the preacher's voice, recognize who preached
+  edges.py        picks the exact first/last line of the sermon (tuned clue scoring)
+  tune_edges.py   re-tunes edges.py on hand-made cuts from a batch
   batch.py        batch processing of past recordings (scan, run, review, apply)
   guide.py        Life Group discussion guide: notes from the transcript, questions, Word/Markdown output
   watcher.py      polls the archive for new recordings

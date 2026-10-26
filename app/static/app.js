@@ -366,7 +366,7 @@ async function fillForm() {
   const cut = job.cut || {}, sug = job.suggest || {}, prop = job.proposal;
   $("#start").value = fmt(cut.start ?? prop.start);
   $("#end").value = fmt(cut.end ?? prop.end);
-  $("#reason").textContent = (prop.source || "").startsWith("voice") ? `🎙 Found by the preacher's voice${prop.source.includes("AI") ? " and pinpointed by the AI" : ""}: ${prop.reason}`
+  $("#reason").textContent = (prop.source || "").startsWith("voice") ? `🎙 Found by the preacher's voice${prop.source.includes("AI") ? " and pinpointed by the AI" : prop.source.includes("clues") ? " and what was said around it" : ""}: ${prop.reason}`
     : prop.source === "ai" ? `The AI's pick: ${prop.reason}` : `Best guess (${prop.source}): ${prop.reason}`;
   $("#title").value = cut.title || sug.title || "";
   $("#scripture").value = cut.scripture || sug.scripture || "";
@@ -649,11 +649,13 @@ const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<
 function showTab(tab) {
   $("#settingsView").hidden = tab !== "settings";
   $("#batchView").hidden = tab !== "batch";
+  $("#cloudView").hidden = tab !== "cloud";
   $("#wizardView").hidden = tab !== "wizard";
   $$("#tabs a").forEach((a) => a.classList.toggle("active", a.dataset.tab === tab));
   clearInterval(settingsPoll); settingsPoll = null;
   if (tab === "settings") { loadSettings(true); settingsPoll = setInterval(() => loadSettings(false), 5000); }
   if (tab === "batch") batchOpen(); else batchStopPolling();
+  if (tab === "cloud") cloudOpen(); else cloudStopPolling();
 }
 $$("#tabs a").forEach((a) => a.onclick = (e) => { e.preventDefault(); showTab(a.dataset.tab); });
 
@@ -707,6 +709,7 @@ function renderConfig(fillForms) {
   $("#cfgPublicUrl").value = v.PUBLIC_URL || "";
   $("#cfgPublicUrl2").value = v.PUBLIC_URL_REMOTE || "";
   fillPreachers(v.DEFAULT_PREACHER || "");
+  $("#cfgEndStyle").value = v.END_STYLE || "after_prayer";
   $("#cfgGuideFolder").textContent = v.GUIDE_EXAMPLES_PATH || "(none: generic format)";
   $("#cfgGuideDiscord").checked = !!v.GUIDE_DISCORD;
 }
@@ -720,7 +723,8 @@ async function fillPreachers(current) {
   $("#voicesKnown").textContent = v.length ? "Voices the app recognizes: " + v.map(([n, k]) => `${n} (${k} sermon${k === 1 ? "" : "s"})`).join(", ") + "."
     : "The app hasn't learned any voices yet. It learns them from the sermons you publish.";
 }
-$("#savePreacher").onclick = () => saveValues("cardPreacher", { DEFAULT_PREACHER: $("#cfgDefaultPreacher").value });
+$("#savePreacher").onclick = () => saveValues("cardPreacher", { DEFAULT_PREACHER: $("#cfgDefaultPreacher").value,
+  END_STYLE: $("#cfgEndStyle").value });
 $("#cfgPrefix").oninput = (e) => $("#prefixEx").textContent = e.target.value || "Sermon_";
 $("#useThisUrl").onclick = () => $("#cfgPublicUrl").value = location.origin;
 
@@ -1280,3 +1284,143 @@ $("#aNew").onclick = async () => {
   if (m) openJob(m[1], m[2] ? +m[2] : undefined).catch(() => go(1));
   else go(1);
 })();
+
+// ======================================================================== word cloud tab
+const C = { list: [], sel: new Set(), view: null, poll: null, gpu: false, loaded: false };
+const cOptIds = { max_words: "#cMax", shape: "#cShape", colors: "#cColors", font: "#cFont" };
+
+async function cloudOpen() {
+  if (!C.loaded) await cloudLoad(false); else { C.view = await api("/api/cloud"); renderCloudRun(); }
+  cloudPolling();
+}
+function cloudPolling() {
+  cloudStopPolling();
+  C.poll = setInterval(async () => {
+    const was = C.view?.run?.status;
+    C.view = await api("/api/cloud");
+    renderCloudRun();
+    if (was !== C.view.run.status) {  // a run just finished: show the cloud and the new transcripts
+      renderCloudResult();
+      if (["done", "stopped", "error"].includes(C.view.run.status)) await cloudLoad(false, true);
+    } else if (C.view.run.status === "running") renderCloudTable();
+  }, 4000);
+}
+function cloudStopPolling() { clearInterval(C.poll); C.poll = null; }
+
+async function cloudLoad(refresh, keepSel) {
+  $("#cSummary").innerHTML = `<div class="hint">${refresh ? "Fetching the post list from WordPress…" : "Looking for sermons…"}</div>`;
+  try {
+    const r = await api(`/api/cloud/sermons${refresh ? "?refresh=true" : ""}`);
+    const first = !C.loaded;
+    C.list = r.sermons; C.gpu = r.gpu; C.view = r; C.loaded = true;
+    if (first || !keepSel) C.sel = new Set(r.selected || C.list.map((x) => x.id));
+    if (first) {
+      const years = [...new Set(C.list.map((x) => x.date.slice(0, 4)))].sort();
+      $("#cFrom").innerHTML = years.map((y) => `<option>${y}</option>`).join("");
+      $("#cTo").innerHTML = years.map((y) => `<option>${y}</option>`).join("");
+      $("#cFrom").value = years[0] || ""; $("#cTo").value = years[years.length - 1] || "";
+      const sp = {};
+      C.list.forEach((x) => { const k = x.speaker || ""; sp[k] = (sp[k] || 0) + 1; });
+      $("#cSpeaker").innerHTML = `<option value="*">All preachers</option>` + Object.entries(sp).sort((a, b) => b[1] - a[1])
+        .map(([k, n]) => `<option value="${esc(k)}">${k ? esc(k) : "No preacher listed"} (${n})</option>`).join("");
+      const o = r.options;
+      Object.entries(cOptIds).forEach(([k, id]) => $(id).value = String(o[k]));
+      $("#cPhrases").checked = !!o.phrases; $("#cFiller").checked = !!o.filler; $("#cExclude").value = o.exclude || "";
+    }
+  } catch (e) { $("#cSummary").innerHTML = `<div class="bad">${esc(e.message)}</div>`; }
+  renderCloudTable(); renderCloudRun(); renderCloudResult();
+}
+function shownSermons() {
+  const from = $("#cFrom").value, to = $("#cTo").value, sp = $("#cSpeaker").value, q = $("#cSearch").value.toLowerCase();
+  return C.list.filter((x) => (!from || x.date.slice(0, 4) >= from) && (!to || x.date.slice(0, 4) <= to)
+    && (sp === "*" || x.speaker === sp) && (!q || `${x.title} ${x.series} ${x.name}`.toLowerCase().includes(q)));
+}
+function renderCloudTable() {
+  const run = C.view?.run || {}, cur = run.status === "running" && run.current?.id;
+  const todo = new Set(run.status === "running" ? run.todo || [] : []);
+  $("#cTable tbody").innerHTML = shownSermons().map((x) => {
+    const tr = x.id === cur ? `<span class="pill">transcribing… ${Math.round((run.fraction || 0) * 100)}%</span>`
+      : x.transcribed ? `<span class="pill ok">✓ ${(x.words || 0).toLocaleString()} words</span><div class="note">${x.minutes} min</div>`
+      : todo.has(x.id) ? `<span class="pill">queued</span>` : `<span class="note">not yet</span>`;
+    return `<tr class="clickable ${C.sel.has(x.id) ? "sel" : ""}" data-id="${x.id}">
+      <td><input type="checkbox" ${C.sel.has(x.id) ? "checked" : ""}></td><td><b>${short(x.date)}</b></td>
+      <td>${esc(x.title || x.name)}${x.series ? `<div class="note">${esc(x.series)}</div>` : ""}</td>
+      <td>${esc(x.speaker) || `<span class="note">—</span>`}</td>
+      <td>${x.source === "nas" ? `NAS<div class="note">${esc(x.name)}</div>` : `WordPress<div class="note">downloaded when transcribed</div>`}</td>
+      <td>${tr}</td></tr>`;
+  }).join("") || `<tr><td colspan="6" class="note" style="text-align:center">No sermons match.</td></tr>`;
+  $$("#cTable tbody tr[data-id]").forEach((tr) => tr.onclick = () => {
+    const id = tr.dataset.id; C.sel.has(id) ? C.sel.delete(id) : C.sel.add(id);
+    tr.classList.toggle("sel", C.sel.has(id)); $("input", tr).checked = C.sel.has(id); renderCloudSummary();
+  });
+  renderCloudSummary();
+}
+function renderCloudSummary() {
+  const sel = C.list.filter((x) => C.sel.has(x.id)), need = sel.filter((x) => !x.transcribed);
+  const mins = need.length * 40, h = (C.gpu ? mins * 0.04 + need.length * 0.3 : mins * 0.3) / 60;
+  const est = h < 1 ? `${Math.max(1, Math.round(h * 60))} min` : `${h.toFixed(h < 10 ? 1 : 0)} h`;
+  const words = sel.reduce((a, x) => a + (x.words || 0), 0);
+  $("#cSummary").innerHTML = `<div><b>${sel.length}</b>selected of ${C.list.length}</div>
+    <div><b>${sel.length - need.length}</b>already transcribed${words ? ` (${words.toLocaleString()} words)` : ""}</div>
+    <div><b>${need.length}</b>to transcribe${need.length ? ` · ~${est} on the ${C.gpu ? "GPU" : "CPU"}` : ""}</div>`;
+  const busy = C.view?.run?.status === "running";
+  $("#cMake").disabled = !sel.length || busy;
+  $("#cMake").textContent = need.length ? `Transcribe ${need.length} & make word cloud` : "Make word cloud";
+  $("#cMakeHint").textContent = busy ? "Working on it — see the progress above."
+    : need.length ? "Transcribing runs in the background; you can leave this page. New Sunday recordings still go first." : "";
+}
+function renderCloudRun() {
+  const run = C.view?.run || {}, box = $("#cRun");
+  const errs = (run.errors || []).map((e) => `<li>${e.date ? short(e.date) + ": " : ""}${esc(e.error)}</li>`).join("");
+  if (run.status === "running" || run.status === "drawing") {
+    const left = run.total - run.done, el = (Date.now() / 1000 - run.started) / 60;
+    const per = run.done ? el / run.done : null;
+    box.innerHTML = `<h3>${run.status === "drawing" ? "Drawing the word cloud…" : `Transcribing ${Math.min(run.done + 1, run.total)} of ${run.total}`}</h3>
+      ${run.current ? `<div>${short(run.current.date)} · ${esc(run.current.title)}</div>` : ""}
+      <progress max="1" value="${run.total ? (run.done + (run.fraction || 0)) / run.total : 0}"></progress>
+      <div class="row"><span class="hint">${per ? `About ${Math.round(per * left)} min left` : "Working out how long this takes…"}</span>
+      <button class="secondary small" id="cStop">Stop after this sermon</button></div>${errs ? `<ul class="bad">${errs}</ul>` : ""}`;
+    $("#cStop").onclick = async () => { C.view = await api("/api/cloud/stop", { method: "POST" }); renderCloudRun(); };
+    box.hidden = false;
+  } else if ((run.status === "stopped" || run.status === "error" || errs) && run.started) {
+    box.innerHTML = `<h3>${run.status === "stopped" ? "Stopped" : run.status === "error" ? "Something went wrong" : "Some sermons couldn't be transcribed"}</h3>
+      ${run.status === "stopped" ? `<p class="hint">${run.done} of ${run.total} transcribed; those are kept. Press <b>Make word cloud</b> to carry on.</p>` : ""}
+      ${run.error ? `<p class="bad">${esc(run.error)}</p>` : ""}${errs ? `<ul class="bad">${errs}</ul>` : ""}`;
+    box.hidden = false;
+  } else box.hidden = true;
+  renderCloudSummary();
+}
+function renderCloudResult() {
+  const r = C.view?.result;
+  $("#cResult").hidden = !r;
+  if (!r) return;
+  const url = `/api/cloud/image/${r.image}`;
+  if ($("#cImg").getAttribute("src") !== url) $("#cImg").src = url;
+  $("#cImgLink").href = url; $("#cDownload").href = `${url}?download=true`;
+  $("#cAbout").textContent = `${r.sermons} sermon${r.sermons === 1 ? "" : "s"}, ${short(r.first)} – ${short(r.last)} · ${r.hours} hours · ${r.words.toLocaleString()} words`;
+  $("#cTop").innerHTML = r.top.map(([w, n]) => `<span>${esc(w)} <i>${n.toLocaleString()}</i><button title="Leave “${esc(w)}” out" data-w="${esc(w)}">✕</button></span>`).join("");
+  $$("#cTop button").forEach((b) => b.onclick = () => {
+    const cur = $("#cExclude").value.split(",").map((x) => x.trim()).filter(Boolean);
+    if (!cur.map((x) => x.toLowerCase()).includes(b.dataset.w.toLowerCase())) cur.push(b.dataset.w);
+    $("#cExclude").value = cur.join(", ");
+    b.parentElement.remove();
+  });
+}
+function cloudOptions() {
+  return { max_words: +$("#cMax").value, shape: $("#cShape").value, colors: $("#cColors").value, font: $("#cFont").value,
+    phrases: $("#cPhrases").checked, filler: $("#cFiller").checked, exclude: $("#cExclude").value };
+}
+$("#cMake").onclick = async () => {
+  const ids = C.list.filter((x) => C.sel.has(x.id)).map((x) => x.id);
+  $("#cMake").disabled = true; $("#cMakeHint").textContent = "Working…";
+  try {
+    C.view = await api("/api/cloud/make", { method: "POST", body: { ids, options: cloudOptions() } });
+    renderCloudRun(); renderCloudResult(); renderCloudTable();
+    if (C.view.run.status !== "running") $("#cResult").scrollIntoView({ behavior: "smooth" });
+  } catch (e) { $("#cMakeHint").textContent = e.message; $("#cMake").disabled = false; }
+};
+["#cFrom", "#cTo", "#cSpeaker"].forEach((s) => $(s).onchange = renderCloudTable);
+$("#cSearch").oninput = renderCloudTable;
+$("#cAll").onclick = () => { shownSermons().forEach((x) => C.sel.add(x.id)); renderCloudTable(); };
+$("#cNone").onclick = () => { C.sel.clear(); renderCloudTable(); };
+$("#cRefresh").onclick = () => cloudLoad(true, true);

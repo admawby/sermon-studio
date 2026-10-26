@@ -11,7 +11,7 @@ import traceback
 from datetime import date
 from pathlib import Path
 
-from . import audio, config, detect, transcribe, voice
+from . import audio, config, detect, edges, transcribe, voice
 
 log = logging.getLogger("sermon.jobs")
 _jobs: dict[str, dict] = {}
@@ -214,7 +214,13 @@ def _analyze(job):
             if vres:
                 voice.label_segments(segments, W, vres["sim"], vres["thr"])
                 tpath.write_text(json.dumps(segments))  # keep the voice labels for the review screens
-                proposal = detect.refine(segments, vres["start"], vres["end"], total, status, has_llm)
+                status("Pinpointing the first and last words of the sermon…")
+                s, e = edges.find(segments, W, vres["sim"], vres["thr"], vres["start"], vres["end"])
+                if s is not None and e is not None and e - s >= 300:
+                    proposal = {"start": max(s - 0.5, 0), "end": min(e + 1.5, total), "source": "voice + clues",
+                                "reason": f"The preacher's talk runs from {detect.fmt(s)} to {detect.fmt(e)}."}
+                else:  # nothing sensible to choose from: the older voice + AI refinement
+                    proposal = detect.refine(segments, vres["start"], vres["end"], total, status, has_llm)
                 sel = (W[:, 0] >= proposal["start"]) & (W[:, 1] <= proposal["end"])
                 voice_info = {"vec": E[sel].mean(0).tolist(), "service_mean": E.mean(0).tolist()}
         except InterruptedError:

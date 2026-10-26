@@ -47,6 +47,8 @@ PUBLIC_URL = env("PUBLIC_URL").rstrip("/")  # address on the home network
 PUBLIC_URL_REMOTE = env("PUBLIC_URL_REMOTE").rstrip("/")
 # used when the preacher's voice isn't recognized with confidence (one of the WordPress People)
 DEFAULT_PREACHER = env("DEFAULT_PREACHER")
+# where the sermon ends: "after_prayer" (after the closing prayer's amen) or "before_prayer" (at "Let's pray")
+END_STYLE = env("END_STYLE", "after_prayer")
 
 # --- Life Group discussion guides ---
 # folder (e.g. NAS/Documents/Life Group) with a few of your own past guides (.docx/.md/.txt): the newest two
@@ -61,7 +63,7 @@ EDITABLE = {
     "ARCHIVE_ROOT": str, "START_PATH": str, "FILE_PREFIX": str,
     "WP_URL": str, "WP_USER": str, "WP_PASSWORD": str,
     "DISCORD_TOKEN": str, "DISCORD_USER_ID": int, "DISCORD_CHANNEL_ID": int, "PUBLIC_URL": str,
-    "PUBLIC_URL_REMOTE": str, "DEFAULT_PREACHER": str, "GUIDE_EXAMPLES_PATH": str, "GUIDE_DISCORD": bool,
+    "PUBLIC_URL_REMOTE": str, "DEFAULT_PREACHER": str, "END_STYLE": str, "GUIDE_EXAMPLES_PATH": str, "GUIDE_DISCORD": bool,
 }
 SECRET = {"WP_PASSWORD", "DISCORD_TOKEN"}
 _ENV = {k: globals()[k] for k in EDITABLE}

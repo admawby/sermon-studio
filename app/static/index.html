@@ -18,6 +18,7 @@
     <nav id="tabs">
       <a href="#" data-tab="wizard" class="active">Sermons</a>
       <a href="#" data-tab="batch">⚡ Batch</a>
+      <a href="#" data-tab="cloud">☁ Word Cloud</a>
       <a href="#" data-tab="settings">⚙ Settings</a>
     </nav>
   </span>
@@ -126,6 +127,51 @@
   </section>
 </main>
 
+<main id="cloudView" hidden>
+  <h2>Word cloud</h2>
+  <p class="hint">Tick the sermons to include and make a word cloud of everything said in them. Each sermon is transcribed once (a minute or two on the GPU); after that, changing the choices redraws the cloud in seconds.</p>
+
+  <section class="card" id="cRun" hidden></section>
+
+  <section class="card" id="cResult" hidden>
+    <a id="cImgLink" target="_blank" rel="noopener"><img id="cImg" alt="Word cloud"></a>
+    <div class="row cMeta"><span id="cAbout" class="hint"></span><span class="grow"></span>
+      <a class="button secondary small" id="cDownload">⬇ Download PNG</a></div>
+    <h3>Most-said words</h3>
+    <p class="hint">Click ✕ to leave a word out, then <b>Make word cloud</b> again.</p>
+    <div id="cTop" class="cTop"></div>
+  </section>
+
+  <section class="card">
+    <h3>Look</h3>
+    <div class="cOpts">
+      <label>Words<select id="cMax"><option>50</option><option>100</option><option>150</option><option>250</option><option>400</option></select></label>
+      <label>Shape<select id="cShape"><option value="wide">Wide (screen)</option><option value="square">Square</option><option value="tall">Tall (phone)</option></select></label>
+      <label>Colors<select id="cColors"><option value="church">Blue &amp; gold</option><option value="warm">Warm</option><option value="night">Night</option><option value="rainbow">Rainbow</option></select></label>
+      <label>Font<select id="cFont"><option value="sans">Sans</option><option value="serif">Serif</option></select></label>
+    </div>
+    <label class="check"><input type="checkbox" id="cPhrases"> Include two-word phrases <span class="hint">(e.g. “Holy Spirit”, “Old Testament”)</span></label>
+    <label class="check"><input type="checkbox" id="cFiller"> Leave out filler words <span class="hint" id="cFillerHint">(um, yeah, gonna, kind of, really…)</span></label>
+    <label class="field">Also leave out these words <span class="hint">(comma-separated)</span><textarea id="cExclude" rows="2" placeholder="e.g. chapter, verse"></textarea></label>
+  </section>
+
+  <section>
+    <h3>Sermons</h3>
+    <div class="toolbar">
+      <label>From <select id="cFrom"></select></label><label>to <select id="cTo"></select></label>
+      <select id="cSpeaker"><option value="">All preachers</option></select>
+      <input id="cSearch" placeholder="Search title or series…" style="width:200px">
+      <span class="grow"></span>
+      <button class="secondary small" id="cAll">Select all shown</button><button class="secondary small" id="cNone">Select none</button>
+      <button class="secondary small" id="cRefresh" title="Look for new sermons and fetch the post list from WordPress again">↻ Refresh</button>
+    </div>
+    <div class="summary" id="cSummary"></div>
+    <div class="twrap"><table class="bt" id="cTable"><thead><tr><th></th><th>Date</th><th>Sermon</th><th>Preacher</th><th>Audio</th><th>Transcript</th></tr></thead><tbody></tbody></table></div>
+    <p class="hint">Preachers come from the WordPress posts, which aren't always right.</p>
+    <footer class="nav"><span class="hint" id="cMakeHint"></span><button id="cMake" disabled>Make word cloud</button></footer>
+  </section>
+</main>
+
 <main id="settingsView" hidden>
   <h2 id="settingsTitle">Settings</h2>
   <div id="setupHead" hidden>
@@ -203,6 +249,11 @@
     <label class="field">Default preacher
       <select id="cfgDefaultPreacher"><option value="">(none: use the last sermon's speaker)</option></select></label>
     <p class="hint" id="voicesKnown"></p>
+    <label class="field">Where the sermon ends
+      <select id="cfgEndStyle">
+        <option value="after_prayer">After the closing prayer's “amen”</option>
+        <option value="before_prayer">At “Let's pray” (leave the closing prayer out)</option>
+      </select></label>
     <div class="actions cardActions"><button id="savePreacher">Save</button><span class="hint msg"></span></div>
   </section>
 

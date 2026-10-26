@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import archive, audio, batch, config, discord_bot, guide, jobs, transcribe, voice, watcher
+from . import archive, audio, batch, cloud, config, discord_bot, guide, jobs, transcribe, voice, watcher
 from . import settings as store
 from .wordpress import DraftGone, WPError, wp
 
@@ -990,11 +990,66 @@ def _job_for_message(mid):
     return None
 
 
+# --- Word Cloud tab ----------------------------------------------------------------------------
+def _cloud_list(refresh=False):
+    try:
+        root = resolve(config.ARCHIVE_ROOT)
+    except HTTPException:
+        raise HTTPException(400, "Set the recordings folder in Settings first")
+    return cloud.sermons(root, virtual_of, refresh)
+
+
+@app.get("/api/cloud")
+def cloud_state():
+    return cloud.view()
+
+
+@app.get("/api/cloud/sermons")
+def cloud_sermons(refresh: bool = False):
+    if refresh and wp.configured:
+        batch.wp_posts(refresh=True)
+    return {"sermons": _cloud_list(refresh), "gpu": transcribe.model_info()["device"] == "cuda", **cloud.view()}
+
+
+class CloudMake(BaseModel):
+    ids: list[str]
+    options: dict = {}
+
+
+@app.post("/api/cloud/make")
+def cloud_make(body: CloudMake):
+    if not body.ids:
+        raise HTTPException(400, "Pick at least one sermon")
+    _cloud_list()
+    try:
+        cloud.start(body.ids, body.options)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+    return cloud.view()
+
+
+@app.post("/api/cloud/stop")
+def cloud_stop():
+    cloud.stop()
+    return cloud.view()
+
+
+@app.get("/api/cloud/image/{name}")
+def cloud_image(name: str, download: bool = False):
+    p = cloud.OUT / name
+    if not re.fullmatch(r"cloud-\d+\.png", name) or not p.exists():
+        raise HTTPException(404, "No such image")
+    return FileResponse(p, media_type="image/png",
+                        filename=f"sermon-word-cloud-{date.today().isoformat()}.png" if download else None)
+
+
 jobs.listeners.append(_on_job_event)
 jobs.listeners.append(batch.on_job_event)
 batch.actions.update(save_cover=_save_cover, encode=do_encode, publish=do_publish, meta=lambda: wp_meta(),
                      notify=lambda text: discord_bot.notify_text(text) if discord_bot.enabled() else None)
 batch.resume_after_restart()
+cloud.lister = _cloud_list
+cloud.resume_after_restart()
 for _j in jobs.recent(10_000):  # a guide being written when the container stopped
     _job = jobs.get(_j["id"])
     if _job and (_job.get("guide") or {}).get("status") == "working":
@@ -1105,6 +1160,9 @@ def set_config(body: ConfigUpdate):
             continue
         if k in ("WP_URL", "PUBLIC_URL", "PUBLIC_URL_REMOTE") and v and not re.match(r"^https?://[^\s/]+", v):
             errors.append(f"{'WordPress address' if k == 'WP_URL' else 'App address'} should start with https:// or http://")
+            continue
+        if k == "END_STYLE" and v not in ("after_prayer", "before_prayer"):
+            errors.append("Unknown sermon end style")
             continue
         if k in ("ARCHIVE_ROOT", "START_PATH", "GUIDE_EXAMPLES_PATH") and v:
             try:
