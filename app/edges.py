@@ -148,3 +148,47 @@ def find(segs, W, sim, thr, vs, ve):
         if pray:
             end = pray[-1]["end"]  # just after "Let's pray."
     return start, end
+
+
+def options(segs, W, sim, thr, vs, ve, k=5, spread=15):
+    """The best k candidate starts and ends, best first, at least `spread` s apart (so the list isn't
+    five versions of the same sentence). Each: {"t", "score", "text"}."""
+    P = (sim >= thr - 0.05).astype(float)
+    starts, ends = _features(segs, W, P, vs, ve)
+    w = weights()
+    out = {}
+    for side, cands in (("start", starts), ("end", ends)):
+        ww = w[side]
+        scored = sorted(((sum(ww.get(key, 0) * (-v if key in PENALTY else v) for key, v in f.items()), t)
+                         for t, f in cands), reverse=True)
+        picked = []
+        for score, t in scored:
+            if all(abs(t - p["t"]) >= spread for p in picked):
+                picked.append({"t": round(float(t), 2), "score": round(float(score), 3), "text": _snippet(segs, t, side)})
+            if len(picked) == k:
+                break
+        out[side] = picked
+    if config.END_STYLE == "before_prayer":  # keep the list consistent with find()
+        s, e = find(segs, W, sim, thr, vs, ve)
+        if out["end"] and e is not None and all(abs(o["t"] - e) > 1 for o in out["end"]):
+            out["end"].insert(0, {"t": round(float(e), 2), "score": None, "text": _snippet(segs, e, "end")})
+            out["end"] = out["end"][:k]
+    return out
+
+
+def _snippet(segs, t, side, n=110):
+    """The words at a candidate edge: what's said from a start onwards, or leading up to an end."""
+    if side == "start":
+        text = " ".join(s["text"] for s in segs if t - 0.5 <= s["start"] < t + 25)
+        return (text[:n] + "…") if len(text) > n else text
+    words = []
+    for s in segs:
+        if s["start"] >= t + 0.5 or s["end"] < t - 30:
+            continue
+        txt = s["text"]
+        if s["end"] > t + 0.5:  # the edge falls inside this line (e.g. an "amen" mid-line): cut the text there
+            m = list(re.finditer(r"\bamen\b\.?", txt, re.I))
+            txt = txt[:m[0].end()] if m else txt
+        words.append(txt)
+    text = " ".join(words)
+    return ("…" + text[-n:]) if len(text) > n else text

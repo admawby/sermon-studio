@@ -138,17 +138,75 @@ def _button_ok(url):
     return "." in (urlsplit(url).hostname or "")
 
 
+def _chosen(job, side):
+    """Index of the option the sermon currently uses for this edge, or None (set in the web app)."""
+    cut, opts = job.get("cut") or {}, (job.get("edge_options") or {}).get(side) or []
+    want = cut.get(side)
+    if want is None:
+        return 0 if opts else None
+    want = want + 0.5 if side == "start" else want - 1.5  # the cut is padded by 0.5 s / 1.5 s
+    for i, o in enumerate(opts):
+        if abs(o["t"] - want) < 1.5:
+            return i
+    return None
+
+
 def _view(job, enabled_buttons, link=True):
     import discord
     v = discord.ui.View(timeout=None)
-    v.add_item(discord.ui.Button(label="Publish", emoji="✅", style=discord.ButtonStyle.success,
+    for row, side in enumerate(("start", "end")):
+        opts = (job.get("edge_options") or {}).get(side) or []
+        if not opts:
+            continue
+        cur = _chosen(job, side)
+        v.add_item(discord.ui.Select(
+            custom_id=f"ss:{side}:{job['id']}", row=row, min_values=1, max_values=1,
+            placeholder=f"{'Start' if side == 'start' else 'End'}: pick another line…",
+            options=[discord.SelectOption(
+                label=f"{side.title()} {i + 1} · {_fmt(o['t'])}"[:100], value=str(i), default=(i == cur),
+                description=(o["text"] or "…")[:100]) for i, o in enumerate(opts)]))
+    v.add_item(discord.ui.Button(label="Publish", emoji="✅", style=discord.ButtonStyle.success, row=2,
                                  custom_id=f"ss:publish:{job['id']}", disabled=not enabled_buttons))
-    v.add_item(discord.ui.Button(label="Save as draft", emoji="📝", style=discord.ButtonStyle.secondary,
+    v.add_item(discord.ui.Button(label="Save as draft", emoji="📝", style=discord.ButtonStyle.secondary, row=2,
                                  custom_id=f"ss:draft:{job['id']}", disabled=not enabled_buttons))
     for label, url in _links(job) if link else []:
         if _button_ok(url):
-            v.add_item(discord.ui.Button(label=label, emoji="✏️", url=url))
+            v.add_item(discord.ui.Button(label=label, emoji="✏️", url=url, row=2))
     return v
+
+
+def _options_text(job, side):
+    opts = (job.get("edge_options") or {}).get(side) or []
+    cur = _chosen(job, side)
+    lines = []
+    for i, o in enumerate(opts):
+        mark = "✅" if i == cur else f"`{i + 1}`"
+        txt = (o["text"] or "").replace("*", "").replace("`", "'")
+        lines.append(f"{mark} **{_fmt(o['t'])}** {'“' + txt + '”' if txt else ''}"[:220])
+    if cur is None and (job.get("cut") or {}).get(side) is not None:
+        lines.insert(0, f"✅ **{_fmt(job['cut'][side])}** (set in Sermon Studio)")
+    return "\n".join(lines)[:1024] or "—"
+
+
+def _ready_embed(job, cut):
+    import discord
+    embed = discord.Embed(title=cut["title"] or "(no title)", description=cut.get("description") or "", color=0x3B6EA8)
+    embed.add_field(name="Series", value=cut.get("series_name") or "—")
+    how = (job.get("suggest") or {}).get("speaker_source")
+    same = cut.get("speaker") == (job.get("suggest") or {}).get("speaker")
+    embed.add_field(name="Speaker", value=(cut.get("speaker") or "—") + (
+        " (recognized by voice)" if how == "voice" and same else " (from the transcript)" if how == "transcript" and same
+        else " (default preacher, voice not recognized)" if how == "default" and same else " (same as last week, check it)"))
+    embed.add_field(name="Date", value=cut["date"])
+    embed.add_field(name="Scripture", value=cut.get("scripture") or "—")
+    embed.add_field(name="Sermon", value=f"{_fmt(cut['start'])} → {_fmt(cut['end'])} ({_fmt(cut['end'] - cut['start'])})")
+    if (job.get("edge_options") or {}).get("start"):
+        embed.add_field(name="▶️ Where it starts (✅ = chosen)", value=_options_text(job, "start"), inline=False)
+        embed.add_field(name="⏹️ Where it ends (✅ = chosen)", value=_options_text(job, "end"), inline=False)
+    for label, url in _links(job):
+        if not _button_ok(url):
+            embed.add_field(name=label, value=url, inline=False)
+    return embed
 
 
 def _fmt(t):
@@ -196,43 +254,29 @@ def notify_error(job):
     _call(go())
 
 
-def notify_ready(job, cut, clips):
-    """cut: the proposed cut/details; clips: (start_clip_path, end_clip_path)."""
+def notify_ready(job, cut, clips=None):
+    """The proposed sermon, with the best few start/end lines to choose from (no audio clips)."""
     async def go():
         import discord
         ch = await _channel()
-        embed = discord.Embed(title=cut["title"] or "(no title)", description=cut.get("description") or "",
-                              color=0x3B6EA8)
-        embed.add_field(name="Series", value=cut.get("series_name") or "—")
-        how = (job.get("suggest") or {}).get("speaker_source")
-        same = cut.get("speaker") == (job.get("suggest") or {}).get("speaker")
-        embed.add_field(name="Speaker", value=(cut.get("speaker") or "—") + (
-            " (recognized by voice)" if how == "voice" and same else " (from the transcript)" if how == "transcript" and same
-            else " (default preacher, voice not recognized)" if how == "default" and same else " (same as last week, check it)"))
-        embed.add_field(name="Date", value=cut["date"])
-        embed.add_field(name="Scripture", value=cut.get("scripture") or "—")
-        embed.add_field(name="Sermon", value=f"{_fmt(cut['start'])} → {_fmt(cut['end'])} "
-                                             f"({_fmt(cut['end'] - cut['start'])})")
-        files = [discord.File(clips[0], filename="sermon-start.mp3"), discord.File(clips[1], filename="sermon-end.mp3")]
         has_cover = bool(job.get("cover"))
-        for label, url in _links(job):
-            if not _button_ok(url):
-                embed.add_field(name=label, value=url, inline=False)
-        text = ("✅ **The sermon is ready.** Listen to how it starts and ends (attached).\n"
+        choose = bool((job.get("edge_options") or {}).get("start"))
+        text = ("✅ **The sermon is ready.** "
+                + ("Check where it starts and ends below; if it's off, pick another line from the menus.\n" if choose
+                   else "\n")
                 + ("Slide is attached already. Press **Publish** when it looks right."
                    if has_cover else
                    "📎 **Reply with this week's sermon slide** (an image) and I'll attach it to the post. "
                    "Publish unlocks once it's here."))
         try:
-            msg = await ch.send(text, embed=embed, files=files, view=_view(job, has_cover))
+            msg = await ch.send(text, embed=_ready_embed(job, cut), view=_view(job, has_cover))
         except discord.HTTPException as e:
             if "url" not in str(e).lower():
                 raise
             # Discord only accepts link buttons with a full address (e.g. a Tailscale *.ts.net name);
             # send without that button and put the link in the text instead
             log.warning("discord: link button rejected (%s); sending without it", _studio_link(job))
-            files = [discord.File(clips[0], filename="sermon-start.mp3"), discord.File(clips[1], filename="sermon-end.mp3")]
-            msg = await ch.send(text + "".join(f"\n✏️ {lab}: {u}" for lab, u in _links(job)), embed=embed, files=files,
+            msg = await ch.send(text + "".join(f"\n✏️ {lab}: {u}" for lab, u in _links(job)), embed=_ready_embed(job, cut),
                                 view=_view(job, has_cover, link=False))
         actions["update"](job, discord={"channel": ch.id, "message": msg.id})
     _call(go())
@@ -310,6 +354,15 @@ async def _main():
             await inter.response.send_message("Only the owner can do that.", ephemeral=True)
             return
         _, action, jid = cid.split(":", 2)
+        if action in ("start", "end"):  # a different line picked from a dropdown
+            idx = int((inter.data.get("values") or ["0"])[0])
+            job, msg = await _loop.run_in_executor(None, actions["set_edge"], jid, action, idx)
+            if not job:
+                await inter.response.send_message(msg, ephemeral=True)
+                return
+            await inter.response.edit_message(embed=_ready_embed(job, job["cut"]), view=_view(job, bool(job.get("cover"))))
+            await inter.followup.send(msg)
+            return
         await inter.response.defer(thinking=True)
         try:
             await inter.message.edit(view=None)  # no double clicks

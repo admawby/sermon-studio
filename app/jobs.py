@@ -205,7 +205,7 @@ def _analyze(job):
     update(job, status="detecting", message="Recognizing the preacher's voice…", progress=1)
     status = lambda m: update(job, message=m)
     has_llm = detect.ensure_llm(status)
-    proposal, vres, voice_info = None, None, None
+    proposal, vres, voice_info, edge_opts = None, None, None, None
     if voice.available():
         try:
             W, E = voice.analyze(transcribe._load_wav(work / "speech.wav"), work / "voice.npz", _abort.is_set)
@@ -216,6 +216,7 @@ def _analyze(job):
                 tpath.write_text(json.dumps(segments))  # keep the voice labels for the review screens
                 status("Pinpointing the first and last words of the sermon…")
                 s, e = edges.find(segments, W, vres["sim"], vres["thr"], vres["start"], vres["end"])
+                edge_opts = edges.options(segments, W, vres["sim"], vres["thr"], vres["start"], vres["end"])
                 if s is not None and e is not None and e - s >= 300:
                     proposal = {"start": max(s - 0.5, 0), "end": min(e + 1.5, total), "source": "voice + clues",
                                 "reason": f"The preacher's talk runs from {detect.fmt(s)} to {detect.fmt(e)}."}
@@ -243,7 +244,8 @@ def _analyze(job):
     update(job, message="Working out who preached…")
     sug.update(_who_preached(segments, proposal, voice_info))
     (work / "proposal.json").write_text(json.dumps(proposal))
-    update(job, status="ready", message="Ready for review", proposal=proposal, suggest=sug, voice=voice_info)
+    update(job, status="ready", message="Ready for review", proposal=proposal, suggest=sug, voice=voice_info,
+           edge_options=edge_opts)
     _notify(job, "ready")
 
 

@@ -117,7 +117,7 @@ Tips:
 
 ![Discord step](images/setup-4-discord.png)
 
-The bot messages you when a sermon has been analyzed. You get a 10-second clip of where it starts and where it ends, plus the title, speaker, series and description, with **Publish** and **Save as draft** buttons. It also asks you for the week's sermon slide. It only connects *out* to Discord, so you don't need to open any ports on your router.
+The bot messages you when a sermon has been analyzed. You get the lines where it thinks the sermon starts and ends, with a few alternatives you can pick from a dropdown if it's off, plus the title, speaker, series and description, with **Publish** and **Save as draft** buttons. It also asks you for the week's sermon slide. It only connects *out* to Discord, so you don't need to open any ports on your router.
 
 Open **How to create the bot (5 minutes)** in the card. Step by step:
 

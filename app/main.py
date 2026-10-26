@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import archive, audio, batch, cloud, config, discord_bot, guide, jobs, transcribe, voice, watcher
+from . import archive, audio, batch, cloud, config, detect, discord_bot, guide, jobs, transcribe, voice, watcher
 from . import settings as store
 from .wordpress import DraftGone, WPError, wp
 
@@ -257,6 +257,22 @@ def send_to_discord(jid: str):
 
 class Notify(BaseModel):
     on: bool
+
+
+class EdgePick(BaseModel):
+    side: str
+    option: int
+
+
+@app.post("/api/jobs/{jid}/edge")
+def pick_edge(jid: str, body: EdgePick):
+    """Use start/end option N (1-based, as numbered in the Discord message)."""
+    if body.side not in ("start", "end"):
+        raise HTTPException(400, "side must be start or end")
+    job, msg = _set_edge(jid, body.side, body.option - 1)
+    if not job:
+        raise HTTPException(400, msg)
+    return {"ok": True, "message": msg, "cut": job["cut"]}
 
 
 @app.post("/api/jobs/{jid}/notify")
@@ -934,10 +950,7 @@ def _on_job_event(job, event):
                "scripture": s.get("scripture", ""), "description": s.get("description", ""), "date": job["date"],
                "bitrate": config.MP3_BITRATE, "normalize": True}
     jobs.update(job, cut=cut)
-    work, src = jobs.workdir(job["id"]), Path(job["source"])
-    clips = (audio.clip(src, work / "clip-start.mp3", cut["start"], 10),
-             audio.clip(src, work / "clip-end.mp3", cut["end"] - 10, 10))
-    discord_bot.notify_ready(job, cut, clips)
+    discord_bot.notify_ready(job, cut)
     if not (jobs.get(job["id"]).get("discord") or {}).get("message"):
         log.error("job %s: the 'sermon is ready' Discord message wasn't sent", job["id"])
 
@@ -972,6 +985,30 @@ def _discord_slide(job, path):
     if a.get("folder") and a.get("status") != "skipped":
         jobs.update(job, archive={**a, "files": {**(a.get("files") or {}), "slide": True}})
     _save_cover(job, path)
+
+
+def _set_edge(jid, side, idx):
+    """A start/end line picked from the Discord dropdown. Returns (job, message) or (None, error)."""
+    job = jobs.get(jid)
+    if not job:
+        return None, "That sermon isn't in Sermon Studio any more."
+    if (job.get("published") or {}).get("status") == "publish":
+        return None, "It's already published; change it in Sermon Studio instead."
+    opts = (job.get("edge_options") or {}).get(side) or []
+    if not 0 <= idx < len(opts):
+        return None, "That option isn't there any more."
+    t = opts[idx]["t"]
+    cut = dict(job.get("cut") or _auto_cut(job))
+    if side == "start":
+        cut["start"] = max(t - 0.5, 0)
+    else:
+        cut["end"] = min(t + 1.5, job.get("duration") or t + 1.5)
+    if cut["end"] - cut["start"] < 60:
+        return None, "That would make the sermon shorter than a minute."
+    # an MP3 made with the old edges is stale: Publish/Draft makes a new one
+    jobs.update(job, cut=cut, output=None if job.get("output") else job.get("output"))
+    return jobs.get(jid), (f"{'Start' if side == 'start' else 'End'} set to option {idx + 1} ({detect.fmt(t)}). "
+                           f"The sermon now runs {detect.fmt(cut['start'])} → {detect.fmt(cut['end'])}.")
 
 
 def _latest_auto_job():
@@ -1059,7 +1096,7 @@ jobs.people_list = lambda: (wp_meta().get("speakers") or []) if wp.configured el
 threading.Thread(target=cleanup_uploads, daemon=True).start()
 discord_bot.start({
     "latest_job": _latest_auto_job, "job_for_message": _job_for_message, "job": jobs.get,
-    "set_cover": _discord_slide, "approve": _approve, "update": jobs.update,
+    "set_cover": _discord_slide, "approve": _approve, "update": jobs.update, "set_edge": _set_edge,
 })
 watcher.start(lambda: resolve(config.ARCHIVE_ROOT), _on_new_recording)  # idles while monitoring is off
 
